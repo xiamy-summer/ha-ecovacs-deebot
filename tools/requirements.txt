@@ -1,0 +1,2 @@
+deebot-client>=17.1
+aiohttp

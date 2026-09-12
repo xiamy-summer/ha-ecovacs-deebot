@@ -1,0 +1,12 @@
+{
+  "domain": "ecovacs_deebot",
+  "name": "Ecovacs Deebot (T90 PRO and more)",
+  "codeowners": ["@summer"],
+  "config_flow": true,
+  "documentation": "https://github.com/DeebotUniverse/client.py",
+  "integration_type": "hub",
+  "iot_class": "cloud_push",
+  "issue_tracker": "https://github.com/DeebotUniverse/client.py/issues",
+  "loggers": ["deebot_client"],
+  "version": "0.1.0"
+}
