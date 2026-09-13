@@ -30,7 +30,7 @@ from homeassistant.util import slugify
 from . import EcovacsConfigEntry
 from .const import DOMAIN
 from .entity import EcovacsEntity
-from .freeclean import FreeCleanError, assert_valid_value, build_value
+from .freeclean import FreeCleanError, assert_valid_value, build_room_segment
 from .t90_map import GetQuickCommandT90, T90FreeCleanV2, get_scenarios
 from .util import get_name_key
 
@@ -240,20 +240,35 @@ class EcovacsVacuum(
                 )
 
             if command == "spot_area":
-                # 可选扩展参数：吸力/水量/拖地模式 → 走 9 字段 freeClean 扩展格式
+                # 可选扩展参数：吸力/水量/拖地模式 → 走 9 字段 freeClean 扩展格式。
+                # rooms 元素支持两种形式：
+                #   - 数字（房间 ID）
+                #   - 字典 {id, suction?, mop_type?, water?, passes?}（每房间独立参数）
                 suction = params.get("suction")
                 water = params.get("water")
                 mop_type = params.get("mop_type")
                 passes = params.get("passes", 1)
-                if suction or water is not None or mop_type:
-                    effective_suction = suction or self._attr_fan_speed or "quiet"
+                room_specs: list[dict[str, Any]] = []
+                per_room = False
+                for item in params["rooms"]:
+                    if isinstance(item, dict):
+                        per_room = True
+                        room_specs.append(item)
+                    else:
+                        room_specs.append({"id": item})
+                if per_room or suction or water is not None or mop_type:
+                    default_suction = suction or self._attr_fan_speed or "quiet"
+                    default_mop = mop_type or "vacuum"
                     try:
-                        value = build_value(
-                            params["rooms"],
-                            passes=passes,
-                            suction=effective_suction,
-                            workmode=mop_type or "vacuum",
-                            water=water,
+                        value = ";".join(
+                            build_room_segment(
+                                spec["id"],
+                                passes=spec.get("passes", passes),
+                                suction=spec.get("suction") or default_suction,
+                                workmode=spec.get("mop_type") or default_mop,
+                                water=spec.get("water", water),
+                            )
+                            for spec in room_specs
                         )
                     except FreeCleanError as error:
                         raise ServiceValidationError(
