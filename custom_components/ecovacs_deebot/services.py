@@ -3,7 +3,6 @@
 import voluptuous as vol
 
 from homeassistant.components.vacuum import DOMAIN as VACUUM_DOMAIN
-from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import HomeAssistant, SupportsResponse, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import service
@@ -16,14 +15,11 @@ SERVICE_RUN_SCENARIO = "run_scenario"
 
 ATTR_SCENARIO = "scenario"
 
-# 注意：实体服务的自定义 schema 必须包含 entity_id 字段（HA 强制校验），
-# 其余字段才会作为 kwargs 传给实体方法。
-RUN_SCENARIO_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_ENTITY_ID): cv.entity_ids,
-        vol.Required(ATTR_SCENARIO): cv.string,
-    }
-)
+# 传普通 dict（而非 vol.Schema 实例）：HA 会经 make_entity_service_schema
+# 自动补全 entity_id 处理，避免不同 HA 版本的 entity service schema 校验差异。
+RUN_SCENARIO_SCHEMA = {
+    vol.Required(ATTR_SCENARIO): cv.string,
+}
 
 
 @callback
