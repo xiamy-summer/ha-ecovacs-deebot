@@ -336,11 +336,14 @@ class T90FreeCleanV2(CleanV2):
     """
 
     def __init__(self, value: str) -> None:
-        super().__init__(CleanAction.START)
+        # 注意顺序：Clean.__init__ 会调用 self._get_args(action)，因此
+        # _additional_content 必须在 super().__init__ 之前赋值
+        # （与官方 CleanAreaV2 的写法一致）。
         self._additional_content = {
             "type": CleanMode.FREE_CLEAN.value,
             "value": value,
         }
+        super().__init__(CleanAction.START)
 
     def _get_args(self, action: CleanAction) -> dict[str, Any]:
         args = super()._get_args(action)
