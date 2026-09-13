@@ -1,14 +1,17 @@
 /**
  * 科沃斯 T90 现代简约地图卡片 (t90-modern-map-card)
  *
- * 基于项目内置的地图卡片重设计：现代化、简约风格。
- * 功能：地图缩放/全屏、房间点选、吸力/模式选择、区域清扫、停止清扫。
+ * 按国行科沃斯 App「全屋清洁」页设计模式重排参数区：
+ *   启动大按钮 → 清洁模式（扫地/边扫边拖/先扫后拖）→ 吸力（四档扇叶图标）
+ *   → 水量（1-50 滑块）→ 清洁效率（标准/快速/深度）→ 次数（×1/×2）。
+ * 房间直接在地图上点选（带位移阈值防误触），下方仅保留选择状态栏。
  *
  * 本文件是 ha-ecovacs-deebot 项目的一部分（GPL-3.0）。
  * 地图协议兼容实现参考并移植自：
  *   https://github.com/lifujie25/ha-ecovacs-t90-pro (GPL-3.0)
  *   https://github.com/Osezno-byte/ecovacs-omni-ha (MIT)
  */
+
 class T90ModernMapCardEditor extends HTMLElement {
   constructor() {
     super();
@@ -77,20 +80,21 @@ class T90ModernMapCardEditor extends HTMLElement {
           <span style="font-weight:600;font-size:14px">显示开关</span>
         </div>
         <div class="toggles">
-          <label><ha-switch class="t-rooms"></ha-switch>区域选择行</label>
-          <label><ha-switch class="t-params"></ha-switch>清扫参数（吸力/模式/水量/次数）</label>
+          <label><ha-switch class="t-rooms"></ha-switch>地图点选区域 + 选择状态栏</label>
+          <label><ha-switch class="t-params"></ha-switch>启动按钮 + 清扫参数（模式/吸力/水量/效率/次数）</label>
           <label><ha-switch class="t-dock"></ha-switch>返回基站按钮</label>
           <label><ha-switch class="t-locate"></ha-switch>定位按钮</label>
         </div>
         <div class="order-head">
-          <span class="order-title">区域排序</span>
+          <span class="order-title">全屋清扫顺序</span>
           <button class="order-load">重新载入列表</button>
         </div>
         <div class="order-section">
           <div class="order-list"></div>
           <div class="order-empty" style="display:none"></div>
           <div class="hint" style="margin-top:8px">
-            拖动房间可调整顺序（也可用 ↑↓）。排序保存在仪表盘配置中，PC/APP 同步生效。
+            未在地图上选择区域时，启动按钮按此顺序清扫全屋。拖动房间可调整顺序（也可用 ↑↓）。
+            排序保存在仪表盘配置中，PC/APP 同步生效。
           </div>
         </div>
         <div class="hint">
@@ -308,8 +312,32 @@ const ICONS = {
   stop: `<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><rect x="6.5" y="6.5" width="11" height="11" rx="2"/></svg>`,
   dock: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11.5 12 4l8 7.5"/><path d="M6.5 10v9h11v-9"/><rect x="9.6" y="13.6" width="4.8" height="3" rx="0.8"/></svg>`,
   locate: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v3M12 18.2v3M2.8 12h3M18.2 12h3"/><circle cx="12" cy="12" r="7.2"/></svg>`,
-  check: `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.5l5 5 10-11"/></svg>`,
-  swap: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4v13m0 0l-3.5-3.5M7 17l3.5-3.5M17 20V7m0 0l-3.5 3.5M17 7l3.5 3.5"/></svg>`,
+};
+
+// 吸力档位图标：扇叶数量随档位递增（安静1叶 → 强力+4叶），风格贴近 App 螺旋扇
+const _blade = `<path d="M12 12C12 6.6 15.4 3.6 20.4 4.1 19.9 9 16.9 12 12 12Z" fill="currentColor"/>`;
+const _fan = (blades, withRing) => {
+  let inner = "";
+  for (let i = 0; i < blades; i++) {
+    inner += `<g transform="rotate(${(i * 360) / blades} 12 12)">${_blade}</g>`;
+  }
+  if (withRing) {
+    inner += `<circle cx="12" cy="12" r="9.2" fill="none" stroke="currentColor" stroke-width="1.4"/>`;
+  }
+  return `<svg viewBox="0 0 24 24" width="22" height="22" fill="none">${inner}</svg>`;
+};
+const SUCTION_ICONS = {
+  quiet: _fan(1, false),
+  normal: _fan(2, false),
+  max: _fan(3, false),
+  max_plus: _fan(4, true),
+};
+
+// 清洁效率图标：路径形态隐喻（快速=长直线，标准=适中弓字形，深度=密折线）
+const EFFICIENCY_ICONS = {
+  fast: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4.5 7.5h15M4.5 16.5h15"/></svg>`,
+  standard: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h5v8h6V8h5v8"/></svg>`,
+  deep: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8h2.2v8h3V8h3v8h3V8h3v8h2.8"/></svg>`,
 };
 
 class T90ModernMapCard extends HTMLElement {
@@ -329,7 +357,14 @@ class T90ModernMapCard extends HTMLElement {
     this._timer = null;
     this._roomOrder = [];
     this._resizeObserver = null;
-    this._dragId = null;
+    // 清扫参数：空值 = 跟随系统（不下发该参数），与后端语义一致
+    this._params = {
+      mode: "",
+      suction: "",
+      water: null,
+      efficiency: "",
+      passes: 1,
+    };
   }
 
   setConfig(config) {
@@ -479,66 +514,103 @@ class T90ModernMapCard extends HTMLElement {
         }
         @keyframes t90-modern-spin { to { transform: rotate(360deg); } }
         .error { color: var(--error-color, #f44336); font-size: 13.5px; }
+        .map [data-room-id] { cursor: pointer; }
 
-        /* ---------- 区域选择 ---------- */
-        .rooms { display: flex; align-items: center; gap: 7px;
-          padding: 12px 16px 4px; overflow-x: auto; scrollbar-width: none; }
-        .rooms::-webkit-scrollbar { display: none; }
-        .sort-toggle.active {
-          color: var(--primary-color);
-          background: color-mix(in srgb, var(--primary-color) 12%, transparent);
-        }
-        .rooms.sorting .room-chip {
-          touch-action: none; cursor: grabbing;
-          border-color: color-mix(in srgb, var(--primary-color) 45%, transparent);
-        }
-        .rooms-label {
-          flex: 0 0 auto; color: var(--secondary-text-color); font-size: 12.5px; margin-right: 3px;
-        }
-        .room-chip {
-          flex: 0 0 auto; height: 31px; padding: 0 13px;
-          display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
-          border: 1px solid var(--divider-color); border-radius: 15px;
-          background: transparent; color: var(--primary-text-color);
-          font-size: 12.5px; font-weight: 500;
-          transition: all .15s ease;
-        }
-        .room-chip:hover { border-color: var(--primary-color); color: var(--primary-color); }
-        .room-chip:active { transform: scale(.95); }
-        .room-chip.selected {
-          border-color: var(--primary-color); color: var(--primary-color);
-          background: color-mix(in srgb, var(--primary-color) 12%, transparent);
-          font-weight: 600;
-        }
-        .room-chip.selected svg { display: inline-block; }
-        .room-chip svg { display: none; }
-        .room-chip.selected svg { display: inline-block; }
-        .room-chip[draggable="true"] { cursor: grab; }
-        .room-chip.dragging { opacity: .4; border-style: dashed; }
-        .room-chip.clear {
-          color: var(--error-color, #f44336);
-          border-color: color-mix(in srgb, var(--error-color, #f44336) 35%, transparent);
-        }
-
-        /* ---------- 参数 ---------- */
-        .params {
+        /* ---------- 选择状态栏 ---------- */
+        .selection-bar {
           display: flex; align-items: center; gap: 8px;
-          padding: 8px 16px 4px; flex-wrap: wrap;
+          padding: 9px 18px 2px; min-height: 22px;
         }
-        .param {
-          display: inline-flex; align-items: center; gap: 6px;
+        .selection-text {
+          flex: 1; min-width: 0; font-size: 12.5px;
+          color: var(--secondary-text-color);
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
-        .param-label { color: var(--secondary-text-color); font-size: 12.5px; }
-        .param select {
-          height: 29px; padding: 0 26px 0 10px;
-          border: 1px solid var(--divider-color); border-radius: 14px;
-          background: transparent; color: var(--primary-text-color);
-          font-size: 12.5px; cursor: pointer; outline: none; appearance: none;
-          background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E");
-          background-repeat: no-repeat; background-position: right 9px center;
-          transition: border-color .15s;
+        .selection-text.has-sel { color: var(--primary-color); font-weight: 600; }
+        .clear-sel {
+          flex: 0 0 auto; height: 25px; padding: 0 11px;
+          display: inline-flex; align-items: center; gap: 4px;
+          border: 1px solid color-mix(in srgb, var(--error-color, #f44336) 35%, transparent);
+          border-radius: 13px; background: transparent; cursor: pointer;
+          color: var(--error-color, #f44336); font-size: 12px; font-weight: 500;
         }
-        .param select:hover, .param select:focus { border-color: var(--primary-color); }
+        .clear-sel svg { width: 11px; height: 11px; }
+        .clear-sel:active { transform: scale(.95); }
+
+        /* ---------- 启动大按钮 ---------- */
+        .start-wrap { padding: 10px 16px 2px; }
+        .start-btn {
+          width: 100%; height: 46px; border: 0; border-radius: 13px; cursor: pointer;
+          display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+          color: #fff; font-size: 15px; font-weight: 600; letter-spacing: 2px;
+          background: linear-gradient(90deg,
+            color-mix(in srgb, var(--primary-color, #03a9f4) 62%, #7986cb),
+            var(--primary-color, #03a9f4));
+          box-shadow: 0 4px 16px color-mix(in srgb, var(--primary-color) 38%, transparent);
+          transition: filter .15s, transform .1s, opacity .15s, box-shadow .15s;
+        }
+        .start-btn:hover:not(:disabled) { filter: brightness(1.06); }
+        .start-btn:active:not(:disabled) { transform: scale(.985); }
+        .start-btn:disabled { opacity: .4; cursor: default; box-shadow: none; }
+        .start-btn svg { width: 17px; height: 17px; }
+        .start-scope {
+          font-size: 12px; font-weight: 500; letter-spacing: .5px;
+          opacity: .85; padding-left: 2px;
+        }
+
+        /* ---------- 参数区（App 风格） ---------- */
+        .params { padding: 8px 16px 2px; display: grid; gap: 14px; }
+        .param-head {
+          display: flex; align-items: baseline; gap: 8px; margin-bottom: 7px;
+        }
+        .param-title { font-size: 13.5px; font-weight: 600; color: var(--primary-text-color); }
+        .param-value { font-size: 12.5px; font-weight: 500; color: var(--primary-color); flex: 1; }
+        .follow-pill {
+          height: 22px; padding: 0 10px; border-radius: 11px; cursor: pointer;
+          border: 1px solid var(--divider-color); background: transparent;
+          color: var(--secondary-text-color); font-size: 11.5px; line-height: 1;
+          transition: all .15s;
+        }
+        .follow-pill.active {
+          border-color: color-mix(in srgb, var(--primary-color) 45%, transparent);
+          color: var(--primary-color);
+          background: color-mix(in srgb, var(--primary-color) 8%, transparent);
+        }
+        .seg-row { display: grid; gap: 8px; }
+        .seg {
+          min-height: 44px; padding: 6px 4px; cursor: pointer;
+          display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+          border: 1.5px solid transparent; border-radius: 11px;
+          background: var(--secondary-background-color, #f5f5f5);
+          color: var(--primary-text-color); font-size: 12.5px; font-weight: 500;
+          transition: all .15s ease; user-select: none; -webkit-user-select: none;
+        }
+        .seg svg { width: 22px; height: 22px; color: var(--secondary-text-color); transition: color .15s; }
+        .seg:active { transform: scale(.96); }
+        .seg.active {
+          border-color: var(--primary-color);
+          background: var(--card-background-color, #fff);
+          color: var(--primary-color); font-weight: 600;
+          box-shadow: 0 2px 10px color-mix(in srgb, var(--primary-color) 12%, transparent);
+        }
+        .seg.active svg { color: var(--primary-color); }
+
+        /* ---------- 水量滑块 ---------- */
+        .water-row { display: flex; align-items: center; gap: 10px; }
+        .water-row input[type="range"] {
+          flex: 1; height: 26px; margin: 0; cursor: pointer;
+          accent-color: var(--primary-color);
+        }
+        .water-row input[type="range"]:disabled { cursor: default; opacity: .45; }
+        .water-num {
+          min-width: 34px; text-align: center; font-size: 13px; font-weight: 600;
+          color: var(--primary-color); font-variant-numeric: tabular-nums;
+        }
+        .water-hint {
+          margin-top: 6px; padding: 5px 10px; border-radius: 8px;
+          background: color-mix(in srgb, var(--primary-color) 7%, transparent);
+          color: var(--primary-color); font-size: 11.5px; text-align: center;
+        }
 
         /* ---------- 底部操作栏 ---------- */
         .actionbar {
@@ -567,11 +639,6 @@ class T90ModernMapCard extends HTMLElement {
         }
         .action-btn:active { transform: scale(.96); }
         .action-btn:disabled { opacity: .35; cursor: default; transform: none; }
-        .action-btn.clean {
-          color: #fff; background: var(--primary-color);
-          box-shadow: 0 3px 12px color-mix(in srgb, var(--primary-color) 38%, transparent);
-        }
-        .action-btn.clean:hover:not(:disabled) { filter: brightness(1.07); }
         .action-btn.stop {
           color: var(--error-color, #f44336);
           background: color-mix(in srgb, var(--error-color, #f44336) 10%, transparent);
@@ -622,7 +689,7 @@ class T90ModernMapCard extends HTMLElement {
         @media (max-width: 600px) {
           .viewport { height: 52vh; min-height: 280px; }
           .actionbar { flex-wrap: wrap; }
-          .action-btn.clean, .action-btn.stop { flex: 1 1 100%; border-radius: 12px; }
+          .action-btn.stop { flex: 1 1 100%; border-radius: 12px; }
           dialog.map-dialog { width: 100vw; height: 100dvh; border-radius: 0; }
         }
       </style>
@@ -635,45 +702,74 @@ class T90ModernMapCard extends HTMLElement {
           <button class="ghost-btn expand" title="全屏查看" aria-label="全屏查看">${ICONS.expand}</button>
         </div>
         <div class="viewport"><div class="map"><div class="loading">正在加载地图</div></div></div>
-        <div class="rooms"><button class="tool-btn sort-toggle" title="排序模式" aria-label="排序模式">${ICONS.swap}</button><span class="rooms-label">未选择区域</span></div>
-        <div class="params">
-          <span class="param">
-            <span class="param-label">吸力</span>
-            <select class="param-suction" aria-label="清扫吸力">
-              <option value="">跟随设置</option>
-              <option value="quiet">安静</option>
-              <option value="normal">标准</option>
-              <option value="max">强力</option>
-              <option value="max_plus">强力+</option>
-            </select>
-          </span>
-          <span class="param">
-            <span class="param-label">模式</span>
-            <select class="param-mop" aria-label="清扫模式">
-              <option value="">跟随设置</option>
-              <option value="vacuum">纯扫</option>
-              <option value="mop">纯拖</option>
-              <option value="vacuum_and_mop">扫拖同启</option>
-              <option value="mop_after_vacuum">扫后拖</option>
-            </select>
-          </span>
-          <span class="param">
-            <span class="param-label">水量</span>
-            <select class="param-water" aria-label="出水量">
-              <option value="">跟随设置</option>
-              <option value="20">低</option>
-              <option value="25">中</option>
-              <option value="30">高</option>
-            </select>
-          </span>
-          <span class="param">
-            <span class="param-label">次数</span>
-            <select class="param-passes" aria-label="清扫次数">
-              <option value="1">1 次</option>
-              <option value="2">2 次</option>
-              <option value="3">3 次</option>
-            </select>
-          </span>
+        <div class="selection-bar">
+          <span class="selection-text">未选择区域 · 点击地图选择（默认清扫全屋）</span>
+          <button class="clear-sel" style="display:none">${ICONS.close}清除</button>
+        </div>
+        <div class="params-wrap">
+          <div class="start-wrap">
+            <button class="start-btn" disabled>${ICONS.play}<span class="start-text">启 动</span><span class="start-scope"></span></button>
+          </div>
+          <div class="params">
+            <div class="param-block">
+              <div class="param-head">
+                <span class="param-title">清洁模式</span>
+                <span class="param-value" data-value="mode"></span>
+              </div>
+              <div class="seg-row" data-param="mode" style="grid-template-columns:repeat(3,1fr)">
+                <button class="seg" data-value="vacuum">扫地</button>
+                <button class="seg" data-value="vacuum_and_mop">边扫边拖</button>
+                <button class="seg" data-value="mop_after_vacuum">先扫后拖</button>
+              </div>
+            </div>
+            <div class="param-block">
+              <div class="param-head">
+                <span class="param-title">吸力</span>
+                <span class="param-value" data-value="suction"></span>
+              </div>
+              <div class="seg-row" data-param="suction" style="grid-template-columns:repeat(4,1fr)">
+                <button class="seg" data-value="quiet" title="安静">${SUCTION_ICONS.quiet}<span>安静</span></button>
+                <button class="seg" data-value="normal" title="标准">${SUCTION_ICONS.normal}<span>标准</span></button>
+                <button class="seg" data-value="max" title="强力">${SUCTION_ICONS.max}<span>强力</span></button>
+                <button class="seg" data-value="max_plus" title="强力+">${SUCTION_ICONS.max_plus}<span>强力+</span></button>
+              </div>
+            </div>
+            <div class="param-block">
+              <div class="param-head">
+                <span class="param-title">水量</span>
+                <span class="param-value" data-value="water"></span>
+                <button class="follow-pill" data-follow="water">跟随设置</button>
+              </div>
+              <div class="water-row">
+                <input type="range" class="water-slider" min="1" max="50" step="1" value="20"
+                  aria-label="出水量" disabled>
+                <span class="water-num"></span>
+              </div>
+              <div class="water-hint"></div>
+            </div>
+            <div class="param-block">
+              <div class="param-head">
+                <span class="param-title">清洁效率</span>
+                <span class="param-value" data-value="efficiency"></span>
+                <button class="follow-pill" data-follow="efficiency">跟随设置</button>
+              </div>
+              <div class="seg-row" data-param="efficiency" style="grid-template-columns:repeat(3,1fr)">
+                <button class="seg" data-value="fast">${EFFICIENCY_ICONS.fast}<span>快速</span></button>
+                <button class="seg" data-value="standard">${EFFICIENCY_ICONS.standard}<span>标准</span></button>
+                <button class="seg" data-value="deep">${EFFICIENCY_ICONS.deep}<span>深度</span></button>
+              </div>
+            </div>
+            <div class="param-block">
+              <div class="param-head">
+                <span class="param-title">次数</span>
+                <span class="param-value" data-value="passes"></span>
+              </div>
+              <div class="seg-row" data-param="passes" style="grid-template-columns:repeat(2,1fr)">
+                <button class="seg" data-value="1"><span>×1</span></button>
+                <button class="seg" data-value="2"><span>×2</span></button>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="actionbar">
           <span class="tool-group">
@@ -685,7 +781,6 @@ class T90ModernMapCard extends HTMLElement {
           </span>
           <span class="spacer"></span>
           <button class="action-btn stop" disabled>${ICONS.stop}<span>停止</span></button>
-          <button class="action-btn clean" disabled>${ICONS.play}<span>清扫全屋</span></button>
         </div>
         <div class="command-status" aria-live="polite"></div>
       </ha-card>
@@ -709,19 +804,13 @@ class T90ModernMapCard extends HTMLElement {
 
     this.shadowRoot.querySelector(".title").textContent = this._config.title;
     this._mapElement = this.shadowRoot.querySelector(".map");
-    this._roomsElement = this.shadowRoot.querySelector(".rooms");
-    this._cleanButton = this.shadowRoot.querySelector(".clean");
+    this._selectionText = this.shadowRoot.querySelector(".selection-text");
+    this._clearButton = this.shadowRoot.querySelector(".clear-sel");
+    this._startButton = this.shadowRoot.querySelector(".start-btn");
     this._stopButton = this.shadowRoot.querySelector(".stop");
     this._dialog = this.shadowRoot.querySelector(".map-dialog");
     this._dialogMapElement = this.shadowRoot.querySelector(".dialog-map");
     this._extraStatusElement = this.shadowRoot.querySelector(".extra-status");
-    this._roomsElement = this.shadowRoot.querySelector(".rooms");
-    this._sorting = false;
-    this.shadowRoot.querySelector(".sort-toggle").addEventListener("click", () => {
-      this._sorting = !this._sorting;
-      this.shadowRoot.querySelector(".sort-toggle").classList.toggle("active", this._sorting);
-      this._roomsElement.classList.toggle("sorting", this._sorting);
-    });
     this._viewport = this.shadowRoot.querySelector(".viewport");
     if (!this._resizeObserver) {
       this._resizeObserver = new ResizeObserver(() => this._applyZoom());
@@ -750,16 +839,55 @@ class T90ModernMapCard extends HTMLElement {
       event.preventDefault();
       this._setZoom(this._zoom + (event.deltaY < 0 ? 0.1 : -0.1));
     }, { passive: false });
-    this._cleanButton.addEventListener("click", () => this._cleanSelectedRooms());
+    this._startButton.addEventListener("click", () => this._cleanSelectedRooms());
     this._stopButton.addEventListener("click", () => this._stopCleaning());
+    this._clearButton.addEventListener("click", () => {
+      this._selectedRooms.clear();
+      this._applySelection();
+    });
     this.shadowRoot.querySelector(".dock").addEventListener("click", () =>
       this._vacuumAction("return_to_base", "正在发送返回基站命令…", "已发送返回基站命令"));
     this.shadowRoot.querySelector(".locate").addEventListener("click", () =>
       this._vacuumAction("locate", "正在定位扫地机…", "已发送定位命令"));
+    // 参数分段选择（模式/吸力/效率/次数）：再次点击已选项 = 恢复跟随设置
+    this.shadowRoot.querySelectorAll(".seg-row").forEach((row) => {
+      row.addEventListener("click", (event) => {
+        const seg = event.target.closest(".seg");
+        if (!seg) return;
+        const param = row.dataset.param;
+        const value = seg.dataset.value;
+        if (param === "passes") {
+          this._params.passes = Number(value);
+        } else {
+          const key = param === "mode" ? "mode" : param;
+          this._params[key] = this._params[key] === value ? "" : value;
+        }
+        this._syncParamUI();
+      });
+    });
+    // 水量滑块：拖动即退出"跟随设置"
+    const slider = this.shadowRoot.querySelector(".water-slider");
+    slider.addEventListener("input", () => {
+      this._params.water = Number(slider.value);
+      this._syncParamUI();
+    });
+    // 跟随设置开关（水量/清洁效率）
+    this.shadowRoot.querySelectorAll(".follow-pill").forEach((pill) => {
+      pill.addEventListener("click", () => {
+        const key = pill.dataset.follow;
+        if (key === "water") {
+          this._params.water = this._params.water === null ? Number(slider.value) : null;
+        } else {
+          this._params.efficiency = this._params.efficiency ? "" : "standard";
+        }
+        this._syncParamUI();
+      });
+    });
+    this._syncParamUI();
     // 按配置控制各区块显示
     const visibility = [
-      [".rooms", this._config.show_rooms !== false],
-      [".params", this._config.show_params !== false],
+      [".selection-bar", this._config.show_rooms !== false],
+      [".params-wrap", this._config.show_params !== false],
       [".dock", this._config.show_dock !== false],
       [".locate", this._config.show_locate !== false],
     ];
@@ -768,6 +896,57 @@ class T90ModernMapCard extends HTMLElement {
       if (el) el.style.display = visible ? "" : "none";
     }
     this._startTimer();
+  }
+
+  /** 同步参数区 UI（分段选中态/数值标签/水量滑块/跟随开关） */
+  _syncParamUI() {
+    const valueNames = {
+      mode: { "": "跟随设置", vacuum: "扫地", vacuum_and_mop: "边扫边拖", mop_after_vacuum: "先扫后拖" },
+      suction: { "": "跟随设置", quiet: "安静", normal: "标准", max: "强力", max_plus: "强力+" },
+      efficiency: { "": "跟随设置", standard: "标准", fast: "快速", deep: "深度" },
+    };
+    for (const param of ["mode", "suction", "efficiency"]) {
+      const row = this.shadowRoot.querySelector(`.seg-row[data-param="${param}"]`);
+      const current = this._params[param];
+      row?.querySelectorAll(".seg").forEach((seg) => {
+        seg.classList.toggle("active", seg.dataset.value === current);
+      });
+      const label = this.shadowRoot.querySelector(`.param-value[data-value="${param}"]`);
+      if (label) label.textContent = valueNames[param][current] || "跟随设置";
+    }
+    // 次数
+    this.shadowRoot.querySelectorAll('.seg-row[data-param="passes"] .seg').forEach((seg) => {
+      seg.classList.toggle("active", Number(seg.dataset.value) === this._params.passes);
+    });
+    const passesLabel = this.shadowRoot.querySelector('.param-value[data-value="passes"]');
+    if (passesLabel) passesLabel.textContent = `${this._params.passes} 次`;
+    // 水量
+    const slider = this.shadowRoot.querySelector(".water-slider");
+    const followWater = this._params.water === null;
+    const waterValue = followWater ? Number(slider?.value || 20) : this._params.water;
+    if (slider) slider.disabled = followWater;
+    const waterLabel = this.shadowRoot.querySelector('.param-value[data-value="water"]');
+    if (waterLabel) waterLabel.textContent = followWater ? "跟随设置" : String(waterValue);
+    const waterNum = this.shadowRoot.querySelector(".water-num");
+    if (waterNum) waterNum.textContent = String(waterValue);
+    const waterHint = this.shadowRoot.querySelector(".water-hint");
+    if (waterHint) {
+      waterHint.textContent = followWater
+        ? "开启滑块后按 App 相同的 1-50 刻度自定义出水量"
+        : this._waterHint(waterValue);
+    }
+    const waterPill = this.shadowRoot.querySelector('.follow-pill[data-follow="water"]');
+    waterPill?.classList.toggle("active", followWater);
+    const effPill = this.shadowRoot.querySelector('.follow-pill[data-follow="efficiency"]');
+    effPill?.classList.toggle("active", !this._params.efficiency);
+    effPill.textContent = this._params.efficiency ? "自定义中" : "跟随设置";
+  }
+
+  _waterHint(value) {
+    if (value <= 16) return "接近干拖，仅少量湿润，适合抛光除味";
+    if (value <= 27) return "适合湿润环境，拖地水量小，水偏少";
+    if (value <= 39) return "水量适中，适合日常湿拖";
+    return "水量充沛，适合重污深度湿拖";
   }
 
   _startTimer() {
@@ -913,10 +1092,24 @@ class T90ModernMapCard extends HTMLElement {
       const id = Number(room.dataset.roomId);
       const name = room.dataset.roomName || `区域 ${id}`;
       if (collectRooms) this._availableRooms.set(id, name);
+      // 点选带位移阈值：按住拖动地图（平移/缩放）不会误触发选房
+      let downPos = null;
+      room.addEventListener("pointerdown", (event) => {
+        downPos = { x: event.clientX, y: event.clientY };
+      });
       room.addEventListener("pointerup", (event) => {
         event.preventDefault();
         event.stopPropagation();
+        if (downPos) {
+          const dx = event.clientX - downPos.x;
+          const dy = event.clientY - downPos.y;
+          downPos = null;
+          if (dx * dx + dy * dy > 144) return; // 移动超过 12px 视为拖动地图
+        }
         this._toggleRoom(id, name);
+      });
+      room.addEventListener("pointercancel", () => {
+        downPos = null;
       });
     });
   }
@@ -925,10 +1118,6 @@ class T90ModernMapCard extends HTMLElement {
     if (this._selectedRooms.has(id)) this._selectedRooms.delete(id);
     else this._selectedRooms.set(id, name);
     this._applySelection();
-  }
-
-  _orderKey() {
-    return `t90-modern-room-order:${this._config?.vacuum_entity || "default"}`;
   }
 
   _loadRoomOrder() {
@@ -940,20 +1129,15 @@ class T90ModernMapCard extends HTMLElement {
     }
   }
 
-  _saveRoomOrder() {
-    try { localStorage.setItem(this._orderKey(), JSON.stringify(this._roomOrder)); } catch {}
+  _orderKey() {
+    return `t90-modern-room-order:${this._config?.vacuum_entity || "default"}`;
   }
 
   _orderedRoomIds() {
     const available = [...this._availableRooms.keys()];
-    // 优先级：编辑器配置 room_order > 本地拖拽排序 > 地图自然顺序
+    // 优先级：编辑器配置 room_order > 地图自然顺序
     const configured = (this._config?.room_order || []).map(Number);
-    let order;
-    if (configured.length) {
-      order = configured.filter((id) => available.includes(id));
-    } else {
-      order = this._roomOrder.filter((id) => available.includes(id));
-    }
+    let order = configured.filter((id) => available.includes(id));
     for (const id of available) {
       if (!order.includes(id)) order.push(id);
     }
@@ -976,95 +1160,41 @@ class T90ModernMapCard extends HTMLElement {
     this._dialogMapElement?.querySelectorAll("[data-room-id]").forEach((room) => {
       room.classList.toggle("t90-selected", this._selectedRooms.has(Number(room.dataset.roomId)));
     });
-    if (!this._roomsElement) return;
-    this._roomsElement.replaceChildren();
-    const label = document.createElement("span");
-    label.className = "rooms-label";
-    label.textContent = this._selectedRooms.size ? `已选 ${this._selectedRooms.size} 个区域` : "未选择区域";
-    this._roomsElement.append(label);
-    for (const id of this._orderedRoomIds()) {
-      const name = this._availableRooms.get(id);
-      const chip = document.createElement("button");
-      chip.className = "room-chip";
-      chip.dataset.roomId = String(id);
-      const selected = this._selectedRooms.has(id);
-      chip.classList.toggle("selected", selected);
-      if (selected) chip.insertAdjacentHTML("afterbegin", ICONS.check);
-      chip.append(name);
-      chip.addEventListener("click", () => {
-        if (this._sorting) return;
-        this._toggleRoom(id, name);
-      });
-      // 排序模式：Pointer 事件拖拽（触屏与鼠标通用）
-      chip.addEventListener("pointerdown", (event) => {
-        if (!this._sorting || event.button !== 0) return;
-        event.preventDefault();
-        const container = this._roomsElement;
-        chip.setPointerCapture(event.pointerId);
-        chip.classList.add("dragging");
-        let moved = false;
-        const onMove = (moveEvent) => {
-          moved = true;
-          const el = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY);
-          const target = el?.closest?.(".room-chip");
-          if (!target || target === chip || target.parentElement !== container) return;
-          const rect = target.getBoundingClientRect();
-          const insertBefore = moveEvent.clientX < rect.left + rect.width / 2;
-          container.insertBefore(chip, insertBefore ? target : target.nextSibling);
-        };
-        const onUp = () => {
-          chip.classList.remove("dragging");
-          chip.removeEventListener("pointermove", onMove);
-          chip.removeEventListener("pointerup", onUp);
-          chip.removeEventListener("pointercancel", onUp);
-          if (!moved) return;
-          const order = [...container.querySelectorAll(".room-chip:not(.clear)")]
-            .map((el) => Number(el.dataset.roomId))
-            .filter((num) => this._availableRooms.has(num));
-          if (order.length) {
-            this._roomOrder = order;
-            this._saveRoomOrder();
-          }
-          this._applySelection();
-        };
-        chip.addEventListener("pointermove", onMove);
-        chip.addEventListener("pointerup", onUp);
-        chip.addEventListener("pointercancel", onUp);
-      });
-      this._roomsElement.append(chip);
+    // 选择状态栏
+    if (this._selectionText) {
+      if (this._selectedRooms.size) {
+        this._selectionText.textContent = `已选：${[...this._selectedRooms.values()].join("、")}`;
+        this._selectionText.classList.add("has-sel");
+      } else {
+        this._selectionText.textContent = "未选择区域 · 点击地图选择（默认清扫全屋）";
+        this._selectionText.classList.remove("has-sel");
+      }
     }
-    if (this._selectedRooms.size) {
-      const clear = document.createElement("button");
-      clear.className = "room-chip clear";
-      clear.insertAdjacentHTML("afterbegin", ICONS.close);
-      clear.append("清除");
-      clear.addEventListener("click", () => {
-        this._selectedRooms.clear();
-        this._applySelection();
-      });
-      this._roomsElement.append(clear);
+    if (this._clearButton) {
+      this._clearButton.style.display = this._selectedRooms.size ? "" : "none";
     }
-    // 未选房间 = 全屋清扫；已选 = 只清扫所选
+    // 启动按钮：未选房间 = 全屋清扫；已选 = 只清扫所选
     const wholeHouse = this._selectedRooms.size === 0;
-    this._cleanButton.disabled =
+    this._startButton.disabled =
       this._cleaning || this._stopping ||
       (wholeHouse && this._availableRooms.size === 0);
-    if (!this._cleaning) {
-      const btnSpan = this._cleanButton.querySelector("span");
-      if (btnSpan) btnSpan.textContent = wholeHouse ? "清扫全屋" : "清扫所选区域";
+    const btnText = this._startButton.querySelector(".start-text");
+    const btnScope = this._startButton.querySelector(".start-scope");
+    if (!this._cleaning && btnText) btnText.textContent = "启 动";
+    if (btnScope) {
+      btnScope.textContent = this._cleaning
+        ? "发送中…"
+        : wholeHouse ? "全屋" : `${this._selectedRooms.size} 个区域`;
     }
   }
 
   _cleanParams() {
     const params = {};
-    const suction = this.shadowRoot.querySelector(".param-suction")?.value;
-    const mopType = this.shadowRoot.querySelector(".param-mop")?.value;
-    const water = this.shadowRoot.querySelector(".param-water")?.value;
-    const passes = Number(this.shadowRoot.querySelector(".param-passes")?.value || 1);
-    if (suction) params.suction = suction;
-    if (mopType) params.mop_type = mopType;
-    if (water) params.water = Number(water);
-    if (passes > 1) params.passes = passes;
+    if (this._params.suction) params.suction = this._params.suction;
+    if (this._params.mode) params.mop_type = this._params.mode;
+    if (this._params.water !== null) params.water = this._params.water;
+    if (this._params.efficiency) params.efficiency = this._params.efficiency;
+    if (this._params.passes > 1) params.passes = this._params.passes;
     return params;
   }
 
@@ -1072,12 +1202,14 @@ class T90ModernMapCard extends HTMLElement {
     const suctionNames = { quiet: "安静", normal: "标准", max: "强力", max_plus: "强力+" };
     const mopNames = {
       vacuum: "纯扫", mop: "纯拖",
-      vacuum_and_mop: "扫拖同启", mop_after_vacuum: "扫后拖",
+      vacuum_and_mop: "边扫边拖", mop_after_vacuum: "先扫后拖",
     };
+    const effNames = { standard: "标准", fast: "快速", deep: "深度" };
     const parts = [];
-    if (params.suction) parts.push(`吸力=${suctionNames[params.suction] || params.suction}`);
     if (params.mop_type) parts.push(`模式=${mopNames[params.mop_type] || params.mop_type}`);
-    if (params.water) parts.push(`水量=${params.water >= 30 ? "高" : params.water >= 25 ? "中" : "低"}`);
+    if (params.suction) parts.push(`吸力=${suctionNames[params.suction] || params.suction}`);
+    if (params.water !== undefined) parts.push(`水量=${params.water}（${this._waterHint(params.water)}）`);
+    if (params.efficiency) parts.push(`效率=${effNames[params.efficiency] || params.efficiency}`);
     if (params.passes > 1) parts.push(`次数=${params.passes}`);
     return parts.join("，");
   }
@@ -1097,9 +1229,9 @@ class T90ModernMapCard extends HTMLElement {
       : `确认清扫以下区域？\n${names}${description ? `\n参数：${description}` : ""}`;
     if (!window.confirm(confirmText)) return;
     this._cleaning = true;
-    this._cleanButton.disabled = true;
-    const buttonText = this._cleanButton.querySelector("span");
-    if (buttonText) buttonText.textContent = "正在发送";
+    this._startButton.disabled = true;
+    const btnScope = this._startButton.querySelector(".start-scope");
+    if (btnScope) btnScope.textContent = "发送中…";
     this._setCommandStatus("正在发送清扫命令…");
     try {
       await this._hass.callService("vacuum", "send_command", {
@@ -1122,7 +1254,6 @@ class T90ModernMapCard extends HTMLElement {
       this._setCommandStatus(`清扫命令发送失败：${message}`, true);
     } finally {
       this._cleaning = false;
-      if (buttonText) buttonText.textContent = wholeHouse ? "清扫全屋" : "清扫所选区域";
       this._applySelection();
       this._updateVacuumState();
     }
@@ -1236,7 +1367,7 @@ if (!window.customCards.some((card) => card.type === "t90-modern-map-card")) {
   window.customCards.push({
     type: "t90-modern-map-card",
     name: "科沃斯 T90 地图（现代版）",
-    description: "现代化简约地图卡片：全屋/区域清扫、吸力/模式/水量/次数、缩放全屏、返回基站与定位",
+    description: "按科沃斯 App 风格设计：地图点选区域、启动按钮、模式/吸力/水量滑块/清洁效率/次数",
     preview: true,
   });
 }

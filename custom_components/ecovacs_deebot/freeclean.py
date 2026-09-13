@@ -48,6 +48,14 @@ WORKMODE_CODES: dict[str, str] = {
     "mop_after_vacuum": "3",
 }
 
+# 清洁效率代码（f8，假设映射，见模块 docstring）。国行 App“清洁效率”
+# 标准/快速/深度，默认标准。
+EFFICIENCY_CODES: dict[str, str] = {
+    "standard": "0",
+    "fast": "1",
+    "deep": "2",
+}
+
 # 各工作模式的默认水量（f5）：吸尘约 30，拖地约 20。
 _DEFAULT_WATER: dict[str, int] = {
     "vacuum_and_mop": 20,
@@ -87,6 +95,15 @@ def _workmode_code(workmode: str) -> str:
         ) from None
 
 
+def _efficiency_code(efficiency: str) -> str:
+    try:
+        return EFFICIENCY_CODES[efficiency]
+    except KeyError:
+        raise FreeCleanError(
+            f"unknown efficiency {efficiency!r}; expected one of {list(EFFICIENCY_CODES)}"
+        ) from None
+
+
 def build_room_segment(
     area_id: int | str,
     *,
@@ -94,10 +111,11 @@ def build_room_segment(
     suction: str = DEFAULT_SUCTION,
     workmode: str = DEFAULT_WORKMODE,
     water: int | None = None,
+    efficiency: str | None = None,
 ) -> str:
     """Build one 9-field room segment.
 
-    ``1,<areaID>,,<passes>,<suction>,<water>,<mopType>,1,0``
+    ``1,<areaID>,,<passes>,<suction>,<water>,<mopType>,1,<efficiency>``
     """
     area = str(area_id).strip()
     if not area:
@@ -116,8 +134,17 @@ def build_room_segment(
     suction_code = _suction_code(suction)
     mop_code = _workmode_code(workmode)
     water_i = int(_DEFAULT_WATER[workmode] if water is None else water)
+    # 国行 App 水量为 1-50 连续滑块，越界值拒绝下发以免固件行为未定义。
+    if not 1 <= water_i <= 50:
+        raise FreeCleanError(f"water must be within 1-50, got {water_i}")
+    efficiency_code = (
+        _efficiency_code(efficiency) if efficiency else EFFICIENCY_CODES["standard"]
+    )
 
-    segment = f"1,{area},,{passes_i},{suction_code},{water_i},{mop_code},1,0"
+    segment = (
+        f"1,{area},,{passes_i},{suction_code},{water_i},{mop_code},"
+        f"1,{efficiency_code}"
+    )
     _assert_segment(segment)
     return segment
 
@@ -129,6 +156,7 @@ def build_value(
     suction: str = DEFAULT_SUCTION,
     workmode: str = DEFAULT_WORKMODE,
     water: int | None = None,
+    efficiency: str | None = None,
 ) -> str:
     """Build a ``;``-joined freeClean value for one or more rooms sharing params."""
     ids = [str(a).strip() for a in area_ids if str(a).strip()]
@@ -136,7 +164,12 @@ def build_value(
         raise FreeCleanError("at least one area id is required")
     segments = [
         build_room_segment(
-            a, passes=passes, suction=suction, workmode=workmode, water=water
+            a,
+            passes=passes,
+            suction=suction,
+            workmode=workmode,
+            water=water,
+            efficiency=efficiency,
         )
         for a in ids
     ]

@@ -240,13 +240,14 @@ class EcovacsVacuum(
                 )
 
             if command == "spot_area":
-                # 可选扩展参数：吸力/水量/拖地模式 → 走 9 字段 freeClean 扩展格式。
+                # 可选扩展参数：吸力/水量/拖地模式/清洁效率 → 9 字段 freeClean 扩展格式。
                 # rooms 元素支持两种形式：
                 #   - 数字（房间 ID）
-                #   - 字典 {id, suction?, mop_type?, water?, passes?}（每房间独立参数）
+                #   - 字典 {id, suction?, mop_type?, water?, passes?, efficiency?}
                 suction = params.get("suction")
                 water = params.get("water")
                 mop_type = params.get("mop_type")
+                efficiency = params.get("efficiency")
                 passes = params.get("passes", 1)
                 room_specs: list[dict[str, Any]] = []
                 per_room = False
@@ -261,6 +262,7 @@ class EcovacsVacuum(
                     or suction
                     or water is not None
                     or mop_type
+                    or efficiency
                     or (passes or 1) != 1
                 ):
                     default_suction = suction or self._attr_fan_speed or "quiet"
@@ -273,6 +275,7 @@ class EcovacsVacuum(
                                 suction=spec.get("suction") or default_suction,
                                 workmode=spec.get("mop_type") or default_mop,
                                 water=spec.get("water", water),
+                                efficiency=spec.get("efficiency") or efficiency,
                             )
                             for spec in room_specs
                         )
