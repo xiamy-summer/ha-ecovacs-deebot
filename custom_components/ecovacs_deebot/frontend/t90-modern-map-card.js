@@ -41,9 +41,13 @@ class T90ModernMapCardEditor extends HTMLElement {
         <ha-entity-picker class="vacuum" label="扫地机器人实体（必选）"></ha-entity-picker>
         <ha-textfield class="interval" type="number" min="5" max="300"
           label="刷新间隔（秒）"></ha-textfield>
+        <ha-entity-picker class="status-entity" label="附加状态实体（可选，如基站/烘干传感器）"
+          clearable></ha-entity-picker>
         <div class="hint">
           选择官方 Ecovacs 集成生成的地图图像实体和扫地机器人实体。
           工作期间会按间隔刷新，空闲时最多每分钟刷新一次。
+          附加状态实体的状态会显示在卡片标题栏（如烘干、基站状态等传感器）。
+          多个实体可用 YAML 配置 status_entities 列表。
         </div>
       </div>`;
 
@@ -78,6 +82,16 @@ class T90ModernMapCardEditor extends HTMLElement {
         "refresh_interval",
         Math.min(300, Math.max(5, Number(event.target.value) || 10)),
       );
+    });
+
+    const statusEntity = this.shadowRoot.querySelector(".status-entity");
+    statusEntity.hass = this._hass;
+    const current = this._config.status_entities ?? this._config.status_entity;
+    statusEntity.value = Array.isArray(current) ? current[0] || "" : current || "";
+    statusEntity.includeDomains = ["binary_sensor", "sensor"];
+    statusEntity.allowCustomEntity = true;
+    statusEntity.addEventListener("value-changed", (event) => {
+      this._updateConfig("status_entity", event.detail.value || "");
     });
   }
 
@@ -122,6 +136,9 @@ class T90ModernMapCard extends HTMLElement {
     this._stopping = false;
     this._lastRefresh = 0;
     this._timer = null;
+    this._roomOrder = [];
+    this._resizeObserver = null;
+    this._dragId = null;
   }
 
   setConfig(config) {
@@ -133,6 +150,7 @@ class T90ModernMapCard extends HTMLElement {
       refresh_interval: 10,
       ...config,
     };
+    this._roomOrder = this._loadRoomOrder();
     this._render();
   }
 
@@ -225,6 +243,10 @@ class T90ModernMapCard extends HTMLElement {
           0%, 100% { opacity: 1; transform: scale(1); }
           50% { opacity: .3; transform: scale(.65); }
         }
+        .extra-status {
+          display: inline-flex; align-items: center; gap: 10px; flex: 0 0 auto;
+        }
+        .extra-status .status { font-size: 12px; }
         .ghost-btn {
           width: 32px; height: 32px; flex: 0 0 auto;
           display: inline-flex; align-items: center; justify-content: center;
@@ -289,6 +311,9 @@ class T90ModernMapCard extends HTMLElement {
         }
         .room-chip.selected svg { display: inline-block; }
         .room-chip svg { display: none; }
+        .room-chip.selected svg { display: inline-block; }
+        .room-chip[draggable="true"] { cursor: grab; }
+        .room-chip.dragging { opacity: .4; border-style: dashed; }
         .room-chip.clear {
           color: var(--error-color, #f44336);
           border-color: color-mix(in srgb, var(--error-color, #f44336) 35%, transparent);
@@ -404,6 +429,7 @@ class T90ModernMapCard extends HTMLElement {
         <div class="header">
           <div class="logo">${ICONS.robot}</div>
           <div class="title"></div>
+          <span class="extra-status"></span>
           <div class="status"><span class="dot"></span><span class="status-text"></span></div>
           <button class="ghost-btn expand" title="全屏查看" aria-label="全屏查看">${ICONS.expand}</button>
         </div>
@@ -468,7 +494,12 @@ class T90ModernMapCard extends HTMLElement {
     this._stopButton = this.shadowRoot.querySelector(".stop");
     this._dialog = this.shadowRoot.querySelector(".map-dialog");
     this._dialogMapElement = this.shadowRoot.querySelector(".dialog-map");
+    this._extraStatusElement = this.shadowRoot.querySelector(".extra-status");
     this._viewport = this.shadowRoot.querySelector(".viewport");
+    if (!this._resizeObserver) {
+      this._resizeObserver = new ResizeObserver(() => this._applyZoom());
+      this._resizeObserver.observe(this._viewport);
+    }
     this._zoomStep = 1;
     this.shadowRoot.querySelector(".dialog-title").textContent = this._config.title;
     this.shadowRoot.querySelector(".expand").addEventListener("click", () => this._openMapDialog());
@@ -562,16 +593,18 @@ class T90ModernMapCard extends HTMLElement {
 
   _applyZoom() {
     const svg = this._mapElement?.querySelector("svg");
-    if (!svg) return;
-    svg.style.width = `${this._zoom * 100}%`;
-    const viewport = this._viewport;
-    const view = svg.viewBox?.baseVal;
-    if (viewport && view?.width && view?.height && this._zoom === 1) {
-      const padding = 28;
-      const fit =
-        Math.round(((viewport.clientWidth - padding) * view.height) / view.width) + padding;
-      const max = Math.max(300, Math.round(window.innerHeight * 0.62));
-      viewport.style.height = `${Math.min(Math.max(fit, 300), max)}px`;
+    if (!svg || !this._viewport) return;
+    // 以视口实际宽度为基准计算像素宽度，保证 zoom=1 时地图完整放入（自适应）
+    const padding = 24;
+    const base = Math.max(200, this._viewport.clientWidth - padding);
+    svg.style.width = `${Math.round(base * this._zoom)}px`;
+    if (this._zoom === 1) {
+      const view = svg.viewBox?.baseVal;
+      if (view?.width && view?.height) {
+        const fit = Math.round((base * view.height) / view.width) + padding;
+        const max = Math.max(280, Math.round(window.innerHeight * 0.62));
+        this._viewport.style.height = `${Math.min(Math.max(fit, 260), max)}px`;
+      }
     }
   }
 
@@ -623,6 +656,41 @@ class T90ModernMapCard extends HTMLElement {
     this._applySelection();
   }
 
+  _orderKey() {
+    return `t90-modern-room-order:${this._config?.vacuum_entity || "default"}`;
+  }
+
+  _loadRoomOrder() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(this._orderKey()) || "[]");
+      return Array.isArray(raw) ? raw.map(Number).filter(Number.isFinite) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  _saveRoomOrder() {
+    try { localStorage.setItem(this._orderKey(), JSON.stringify(this._roomOrder)); } catch {}
+  }
+
+  _orderedRoomIds() {
+    // 已排序的排前面（按用户拖拽顺序），新出现的房间追加在末尾
+    const order = this._roomOrder.filter((id) => this._availableRooms.has(id));
+    for (const id of this._availableRooms.keys()) {
+      if (!order.includes(id)) order.push(id);
+    }
+    this._roomOrder = order;
+    return order;
+  }
+
+  _statusEntityIds() {
+    const raw =
+      this._config.status_entities ??
+      (this._config.status_entity ? [this._config.status_entity] : []);
+    const list = Array.isArray(raw) ? raw : [raw];
+    return list.filter((item) => typeof item === "string" && item);
+  }
+
   _applySelection() {
     this._mapElement?.querySelectorAll("[data-room-id]").forEach((room) => {
       room.classList.toggle("t90-selected", this._selectedRooms.has(Number(room.dataset.roomId)));
@@ -636,7 +704,8 @@ class T90ModernMapCard extends HTMLElement {
     label.className = "rooms-label";
     label.textContent = this._selectedRooms.size ? `已选 ${this._selectedRooms.size} 个区域` : "未选择区域";
     this._roomsElement.append(label);
-    for (const [id, name] of this._availableRooms) {
+    for (const id of this._orderedRoomIds()) {
+      const name = this._availableRooms.get(id);
       const chip = document.createElement("button");
       chip.className = "room-chip";
       const selected = this._selectedRooms.has(id);
@@ -644,6 +713,29 @@ class T90ModernMapCard extends HTMLElement {
       if (selected) chip.insertAdjacentHTML("afterbegin", ICONS.check);
       chip.append(name);
       chip.addEventListener("click", () => this._toggleRoom(id, name));
+      // 拖拽排序
+      chip.draggable = true;
+      chip.addEventListener("dragstart", (event) => {
+        this._dragId = id;
+        chip.classList.add("dragging");
+        event.dataTransfer.effectAllowed = "move";
+        try { event.dataTransfer.setData("text/plain", String(id)); } catch {}
+      });
+      chip.addEventListener("dragend", () => {
+        this._dragId = null;
+        chip.classList.remove("dragging");
+      });
+      chip.addEventListener("dragover", (event) => event.preventDefault());
+      chip.addEventListener("drop", (event) => {
+        event.preventDefault();
+        if (this._dragId === null || this._dragId === id) return;
+        const order = this._orderedRoomIds();
+        order.splice(order.indexOf(this._dragId), 1);
+        order.splice(order.indexOf(id), 0, this._dragId);
+        this._roomOrder = order;
+        this._saveRoomOrder();
+        this._applySelection();
+      });
       this._roomsElement.append(chip);
     }
     if (this._selectedRooms.size) {
@@ -762,6 +854,23 @@ class T90ModernMapCard extends HTMLElement {
       element.style.setProperty("--status-color", colorMap[state] || "var(--secondary-text-color)");
       const text = element.querySelector(".status-text");
       if (text) text.textContent = stateNames[state] || state;
+    }
+    // 附加状态实体（如基站/烘干传感器）
+    if (this._extraStatusElement) {
+      this._extraStatusElement.replaceChildren();
+      const simpleStates = { on: "开", off: "关", unavailable: "不可用", unknown: "未知" };
+      for (const entityId of this._statusEntityIds()) {
+        const stateObj = this._hass?.states[entityId];
+        if (!stateObj) continue;
+        const name = stateObj.attributes?.friendly_name || entityId;
+        const raw = stateObj.state;
+        const value = raw in simpleStates ? simpleStates[raw] : raw;
+        const badge = document.createElement("span");
+        badge.className = "status";
+        badge.innerHTML = `<span class="dot"></span><span class="status-text"></span>`;
+        badge.querySelector(".status-text").textContent = `${name} ${value}`;
+        this._extraStatusElement.append(badge);
+      }
     }
     if (this._stopButton) {
       this._stopButton.disabled = this._stopping || this._cleaning;
