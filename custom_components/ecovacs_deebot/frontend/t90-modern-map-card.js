@@ -308,6 +308,7 @@ const ICONS = {
   close: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>`,
   reset: `<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>`,
   play: `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg>`,
+  pause: `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><rect x="6" y="5" width="4.2" height="14" rx="1.3"/><rect x="13.8" y="5" width="4.2" height="14" rx="1.3"/></svg>`,
   stop: `<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><rect x="6.5" y="6.5" width="11" height="11" rx="2"/></svg>`,
   dock: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11.5 12 4l8 7.5"/><path d="M6.5 10v9h11v-9"/><rect x="9.6" y="13.6" width="4.8" height="3" rx="0.8"/></svg>`,
   locate: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v3M12 18.2v3M2.8 12h3M18.2 12h3"/><circle cx="12" cy="12" r="7.2"/></svg>`,
@@ -352,6 +353,8 @@ class T90ModernMapCard extends HTMLElement {
     this._refreshing = false;
     this._cleaning = false;
     this._stopping = false;
+    this._selectionLocked = false;
+    this._toastTimer = null;
     this._lastRefresh = 0;
     this._timer = null;
     this._roomOrder = [];
@@ -441,21 +444,8 @@ class T90ModernMapCard extends HTMLElement {
           background: var(--card-background-color, #fff);
         }
 
-        /* ---------- 地图 ---------- */
+        /* ---------- 地图容器 ---------- */
         .map-wrap { position: relative; margin: 0 12px; }
-        .expand-float {
-          position: absolute; top: 10px; right: 10px; z-index: 2;
-          width: 34px; height: 34px;
-          display: inline-flex; align-items: center; justify-content: center;
-          border: 0; border-radius: 10px; padding: 0; cursor: pointer;
-          color: var(--primary-text-color);
-          background: color-mix(in srgb, var(--card-background-color, #fff) 72%, transparent);
-          backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
-          box-shadow: 0 1px 6px rgb(0 0 0 / .1);
-          transition: background .15s, color .15s;
-        }
-        .expand-float:hover { color: var(--primary-color); }
-        .expand-float:active { transform: scale(.92); }
         .viewport {
           border-radius: 14px; overflow: auto;
           background:
@@ -465,6 +455,48 @@ class T90ModernMapCard extends HTMLElement {
           overscroll-behavior: contain;
           transition: height .3s ease;
         }
+        .viewport.locked .map [data-room-id] { cursor: default; }
+
+        /* ---------- 地图悬浮工具（右上：定位/回充/全屏） ---------- */
+        .map-tools {
+          position: absolute; top: 10px; right: 10px; z-index: 2;
+          display: inline-flex; gap: 6px;
+        }
+        .map-tool {
+          width: 34px; height: 34px;
+          display: inline-flex; align-items: center; justify-content: center;
+          border: 0; border-radius: 10px; padding: 0; cursor: pointer;
+          color: var(--primary-text-color);
+          background: color-mix(in srgb, var(--card-background-color, #fff) 72%, transparent);
+          backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+          box-shadow: 0 1px 6px rgb(0 0 0 / .1);
+          transition: background .15s, color .15s;
+        }
+        .map-tool:hover:not(:disabled) { color: var(--primary-color); }
+        .map-tool:active:not(:disabled) { transform: scale(.92); }
+        .map-tool:disabled { opacity: .35; cursor: default; }
+
+        /* ---------- 命令提示 toast（地图顶部居中悬浮） ---------- */
+        .toast {
+          position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+          z-index: 3; max-width: 78%;
+          padding: 7px 15px; border-radius: 18px;
+          font-size: 12.5px; font-weight: 500; text-align: center;
+          color: var(--primary-text-color);
+          background: color-mix(in srgb, var(--card-background-color, #fff) 88%, transparent);
+          backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+          box-shadow: 0 2px 12px rgb(0 0 0 / .14);
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+          animation: t90-modern-toast-in .18s ease-out;
+        }
+        .toast.error { color: var(--error-color, #f44336); }
+        .toast.success { color: var(--success-color, #2e7d32); }
+        @keyframes t90-modern-toast-in {
+          from { opacity: 0; transform: translateX(-50%) translateY(-6px); }
+          to { opacity: 1; transform: translateX(-50%) translateY(0); }
+        }
+
+        /* ---------- 地图 ---------- */
         .map {
           display: flex; min-width: 100%; min-height: 100%;
           align-items: center; justify-content: center; padding: 12px; box-sizing: border-box;
@@ -604,11 +636,32 @@ class T90ModernMapCard extends HTMLElement {
           color: var(--primary-color); font-size: 11.5px; text-align: center;
         }
 
-        /* ---------- 底部操作栏（右侧：定位/回充 + 停止） ---------- */
-        .actionbar {
-          display: flex; align-items: center; gap: 10px;
-          padding: 12px 16px 14px; justify-content: flex-end;
+        /* ---------- 清扫中操作（暂停 / 结束并返回，替换启动按钮） ---------- */
+        .active-actions {
+          display: none; grid-template-columns: 1fr 1fr; gap: 10px;
         }
+        .active-actions.show { display: grid; }
+        .pause-btn, .end-btn {
+          height: 46px; border-radius: 13px; cursor: pointer;
+          display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+          font-size: 14px; font-weight: 600; letter-spacing: 1px;
+          transition: filter .15s, transform .1s, opacity .15s;
+        }
+        .pause-btn:active:not(:disabled), .end-btn:active:not(:disabled) { transform: scale(.98); }
+        .pause-btn:disabled, .end-btn:disabled { opacity: .4; cursor: default; }
+        .pause-btn {
+          border: 1.5px solid color-mix(in srgb, var(--primary-color) 45%, transparent);
+          color: var(--primary-color);
+          background: color-mix(in srgb, var(--primary-color) 6%, var(--card-background-color, #fff));
+        }
+        .pause-btn svg { width: 15px; height: 15px; }
+        .end-btn {
+          border: 0; color: var(--error-color, #f44336);
+          background: color-mix(in srgb, var(--error-color, #f44336) 9%, var(--card-background-color, #fff));
+        }
+        .end-btn svg { width: 14px; height: 14px; }
+
+        /* ---------- 全屏弹窗专用工具条样式 ---------- */
         .ghost-btn {
           width: 32px; height: 32px; flex: 0 0 auto;
           display: inline-flex; align-items: center; justify-content: center;
@@ -632,29 +685,6 @@ class T90ModernMapCard extends HTMLElement {
         .tool-btn:hover:not(:disabled) { color: var(--primary-color); background: color-mix(in srgb, var(--primary-color) 10%, transparent); }
         .tool-btn:active:not(:disabled) { transform: scale(.9); }
         .tool-btn:disabled { opacity: .35; cursor: default; }
-        .spacer { flex: 1; }
-        .action-btn {
-          height: 38px; padding: 0 18px; border: 0; border-radius: 19px; flex: 0 0 auto;
-          display: inline-flex; align-items: center; justify-content: center; gap: 7px;
-          font-size: 13.5px; font-weight: 600; letter-spacing: .2px; cursor: pointer;
-          transition: filter .15s, transform .1s, opacity .15s, box-shadow .15s;
-        }
-        .action-btn:active { transform: scale(.96); }
-        .action-btn:disabled { opacity: .35; cursor: default; transform: none; }
-        .action-btn.stop {
-          color: var(--error-color, #f44336);
-          background: color-mix(in srgb, var(--error-color, #f44336) 10%, transparent);
-        }
-        .action-btn.stop:hover:not(:disabled) { background: color-mix(in srgb, var(--error-color, #f44336) 18%, transparent); }
-
-        /* ---------- 命令状态 ---------- */
-        .command-status {
-          min-height: 16px; padding: 0 16px 11px;
-          color: var(--secondary-text-color); font-size: 12.5px; text-align: center;
-        }
-        .command-status:empty { display: none; }
-        .command-status.error { color: var(--error-color, #f44336); }
-        .command-status.success { color: var(--success-color, #2e7d32); }
 
         /* ---------- 全屏弹窗 ---------- */
         dialog.map-dialog {
@@ -690,15 +720,19 @@ class T90ModernMapCard extends HTMLElement {
         }
         @media (max-width: 600px) {
           .viewport { height: 52vh; min-height: 280px; }
-          .actionbar { flex-wrap: wrap; }
-          .action-btn.stop { flex: 1 1 100%; border-radius: 12px; }
+          .active-actions { grid-template-columns: 1fr 1fr; }
           dialog.map-dialog { width: 100vw; height: 100dvh; border-radius: 0; }
         }
       </style>
       <ha-card>
         <div class="map-wrap">
           <div class="viewport"><div class="map"><div class="loading">正在加载地图</div></div></div>
-          <button class="ghost-btn expand-float" title="全屏查看" aria-label="全屏查看">${ICONS.expand}</button>
+          <div class="toast" aria-live="polite" style="display:none"></div>
+          <div class="map-tools">
+            <button class="map-tool locate" title="定位扫地机" aria-label="定位扫地机">${ICONS.locate}</button>
+            <button class="map-tool dock" title="返回基站" aria-label="返回基站">${ICONS.dock}</button>
+            <button class="map-tool expand-float" title="全屏查看" aria-label="全屏查看">${ICONS.expand}</button>
+          </div>
         </div>
         <div class="status-row">
           <div class="status"><span class="dot"></span><span class="status-text"></span></div>
@@ -711,6 +745,10 @@ class T90ModernMapCard extends HTMLElement {
         <div class="params-wrap">
           <div class="start-wrap">
             <button class="start-btn" disabled>${ICONS.play}<span class="start-text">启 动</span><span class="start-scope"></span></button>
+            <div class="active-actions">
+              <button class="pause-btn"><span class="pi-pause">${ICONS.pause}</span><span class="pi-play" style="display:none">${ICONS.play}</span><span class="pause-text">暂停</span></button>
+              <button class="end-btn">${ICONS.stop}<span class="end-text">结束并返回</span></button>
+            </div>
           </div>
           <div class="params">
             <div class="param-block">
@@ -773,15 +811,6 @@ class T90ModernMapCard extends HTMLElement {
             </div>
           </div>
         </div>
-        <div class="actionbar">
-          <span class="spacer"></span>
-          <span class="tool-group">
-            <button class="tool-btn locate" title="定位扫地机" aria-label="定位扫地机">${ICONS.locate}</button>
-            <button class="tool-btn dock" title="返回基站" aria-label="返回基站">${ICONS.dock}</button>
-          </span>
-          <button class="action-btn stop" disabled>${ICONS.stop}<span>停止</span></button>
-        </div>
-        <div class="command-status" aria-live="polite"></div>
       </ha-card>
       <dialog class="map-dialog" aria-label="T90 地图全屏">
         <div class="dialog-layout">
@@ -805,7 +834,11 @@ class T90ModernMapCard extends HTMLElement {
     this._selectionText = this.shadowRoot.querySelector(".selection-text");
     this._clearButton = this.shadowRoot.querySelector(".clear-sel");
     this._startButton = this.shadowRoot.querySelector(".start-btn");
-    this._stopButton = this.shadowRoot.querySelector(".stop");
+    this._activeActions = this.shadowRoot.querySelector(".active-actions");
+    this._pauseButton = this.shadowRoot.querySelector(".pause-btn");
+    this._pauseText = this.shadowRoot.querySelector(".pause-text");
+    this._endButton = this.shadowRoot.querySelector(".end-btn");
+    this._toast = this.shadowRoot.querySelector(".toast");
     this._dialog = this.shadowRoot.querySelector(".map-dialog");
     this._dialogMapElement = this.shadowRoot.querySelector(".dialog-map");
     this._extraStatusElement = this.shadowRoot.querySelector(".extra-status");
@@ -834,7 +867,8 @@ class T90ModernMapCard extends HTMLElement {
       this._setZoom(this._zoom + (event.deltaY < 0 ? 0.1 : -0.1));
     }, { passive: false });
     this._startButton.addEventListener("click", () => this._cleanSelectedRooms());
-    this._stopButton.addEventListener("click", () => this._stopCleaning());
+    this._pauseButton.addEventListener("click", () => this._togglePause());
+    this._endButton.addEventListener("click", () => this._endAndReturn());
     this._clearButton.addEventListener("click", () => {
       this._selectedRooms.clear();
       this._applySelection();
@@ -1108,7 +1142,16 @@ class T90ModernMapCard extends HTMLElement {
     });
   }
 
+  _vacuumState() {
+    return this._hass?.states[this._config.vacuum_entity]?.state || "unknown";
+  }
+
   _toggleRoom(id, name) {
+    // 与科沃斯 App 一致：清扫中/暂停时不允许选择区域
+    if (this._selectionLocked) {
+      this._setCommandStatus("清扫进行中，无法选择区域", true);
+      return;
+    }
     if (this._selectedRooms.has(id)) this._selectedRooms.delete(id);
     else this._selectedRooms.set(id, name);
     this._applySelection();
@@ -1154,6 +1197,18 @@ class T90ModernMapCard extends HTMLElement {
     this._dialogMapElement?.querySelectorAll("[data-room-id]").forEach((room) => {
       room.classList.toggle("t90-selected", this._selectedRooms.has(Number(room.dataset.roomId)));
     });
+    // 清扫中/暂停：选择锁定提示（与 App 行为一致）
+    if (this._selectionLocked) {
+      if (this._selectionText) {
+        this._selectionText.textContent =
+          this._vacuumState() === "paused"
+            ? "已暂停 · 暂停选择区域"
+            : "清扫进行中 · 暂停选择区域";
+        this._selectionText.classList.remove("has-sel");
+      }
+      if (this._clearButton) this._clearButton.style.display = "none";
+      return;
+    }
     // 选择状态栏
     if (this._selectionText) {
       if (this._selectedRooms.size) {
@@ -1210,7 +1265,7 @@ class T90ModernMapCard extends HTMLElement {
   }
 
   async _cleanSelectedRooms() {
-    if (!this._hass || this._cleaning || this._stopping) return;
+    if (!this._hass || this._cleaning || this._stopping || this._selectionLocked) return;
     const wholeHouse = this._selectedRooms.size === 0;
     const roomIds = wholeHouse ? this._orderedRoomIds() : [...this._selectedRooms.keys()];
     if (!roomIds.length) return;
@@ -1268,36 +1323,67 @@ class T90ModernMapCard extends HTMLElement {
     }
   }
 
-  async _stopCleaning() {
+  async _togglePause() {
+    if (!this._hass || this._stopping || this._cleaning) return;
+    const paused = this._vacuumState() === "paused";
+    const service = paused ? "start" : "pause";
+    const pending = paused ? "正在发送继续命令…" : "正在发送暂停命令…";
+    const success = paused ? "已继续清扫" : "已暂停清扫";
+    this._setCommandStatus(pending);
+    try {
+      await this._hass.callService("vacuum", service, {
+        entity_id: this._config.vacuum_entity,
+      });
+      this._setCommandStatus(success, false, true);
+    } catch (error) {
+      const message = error?.message || String(error);
+      this._setCommandStatus(`命令发送失败：${message}`, true);
+    } finally {
+      this._syncRunState();
+    }
+  }
+
+  async _endAndReturn() {
     if (!this._hass || this._stopping || this._cleaning) return;
     this._stopping = true;
-    this._stopButton.disabled = true;
-    this._applySelection();
-    const buttonText = this._stopButton.querySelector("span");
-    if (buttonText) buttonText.textContent = "正在停止";
-    this._setCommandStatus("正在发送停止命令…");
+    this._syncButtons();
+    const endText = this._endButton?.querySelector(".end-text");
+    if (endText) endText.textContent = "正在结束";
+    this._setCommandStatus("正在结束清扫并返回基站…");
     try {
       await this._hass.callService("vacuum", "stop", {
         entity_id: this._config.vacuum_entity,
       });
-      this._setCommandStatus("已发送停止清扫命令", false, true);
+      // 等状态落地后再回充，避免 stop/charge 命令竞态
+      await new Promise((resolve) => window.setTimeout(resolve, 1000));
+      await this._hass.callService("vacuum", "return_to_base", {
+        entity_id: this._config.vacuum_entity,
+      });
+      this._setCommandStatus("已结束清扫，正在返回基站", false, true);
     } catch (error) {
       const message = error?.message || String(error);
-      this._setCommandStatus(`停止命令发送失败：${message}`, true);
+      this._setCommandStatus(`命令发送失败：${message}`, true);
     } finally {
       this._stopping = false;
-      if (buttonText) buttonText.textContent = "停止";
-      this._applySelection();
-      this._updateVacuumState();
+      if (endText) endText.textContent = "结束并返回";
+      this._syncRunState();
     }
   }
 
   _setCommandStatus(message, isError = false, isSuccess = false) {
-    const status = this.shadowRoot.querySelector(".command-status");
-    if (!status) return;
-    status.textContent = message;
-    status.classList.toggle("error", isError);
-    status.classList.toggle("success", isSuccess);
+    const toast = this._toast || this.shadowRoot.querySelector(".toast");
+    if (!toast) return;
+    toast.textContent = message;
+    toast.style.display = message ? "" : "none";
+    toast.classList.toggle("error", isError);
+    toast.classList.toggle("success", isSuccess);
+    if (this._toastTimer) window.clearTimeout(this._toastTimer);
+    if (message) {
+      // 成功/过程提示 3.5s 自动消失，错误停留更久
+      this._toastTimer = window.setTimeout(() => {
+        toast.style.display = "none";
+      }, isError ? 8000 : 3500);
+    }
   }
 
   _updateVacuumState() {
@@ -1343,28 +1429,53 @@ class T90ModernMapCard extends HTMLElement {
         this._extraStatusElement.append(badge);
       }
     }
-    if (this._stopButton || this.shadowRoot.querySelector(".dock")) {
-      this._syncButtons();
-    }
+    this._syncRunState();
   }
 
-  /** 按机器人当前状态同步 停止/返回基站 按钮可按性。
+  /** 清扫状态联动（与科沃斯 App 一致）：
    *
-   * - 停止（clean_V2 act=stop）：仅在清扫中/已暂停时有意义；
-   *   空闲或在基站时无可停止的任务，置灰。
-   * - 返回基站（charge act=go）：已在基站或正在回充时不可再触发；
-   *   清扫中回充等价于"停止并回充"，允许。
+   * - 清扫中/暂停：锁定地图选房与启动按钮，主按钮区切换为
+   *   「暂停/继续」+「结束并返回」两个按钮。
+   * - 其他状态：显示启动按钮，允许地图点选。
    */
-  _syncButtons() {
-    const state = this._hass?.states[this._config.vacuum_entity]?.state || "unknown";
-    if (this._stopButton) {
-      this._stopButton.disabled =
-        this._stopping || this._cleaning ||
-        !["cleaning", "paused"].includes(state);
+  _syncRunState() {
+    const state = this._vacuumState();
+    const active = state === "cleaning" || state === "paused";
+    this._selectionLocked = active;
+    this._viewport?.classList.toggle("locked", active);
+    if (active && this._selectedRooms.size) {
+      this._selectedRooms.clear();
     }
+    // 主按钮区切换：启动 ↔ 暂停/结束并返回
+    if (this._startButton && this._activeActions) {
+      this._startButton.style.display = active ? "none" : "";
+      this._activeActions.classList.toggle("show", active);
+    }
+    // 暂停按钮：图标+文案随状态切换
+    if (this._pauseButton) {
+      const paused = state === "paused";
+      const iconPause = this._pauseButton.querySelector(".pi-pause");
+      const iconPlay = this._pauseButton.querySelector(".pi-play");
+      if (iconPause) iconPause.style.display = paused ? "none" : "";
+      if (iconPlay) iconPlay.style.display = paused ? "" : "none";
+      if (this._pauseText) this._pauseText.textContent = paused ? "继续清扫" : "暂停";
+    }
+    this._syncButtons();
+    this._applySelection();
+  }
+
+  /** 按钮可按性：回充按状态置灰，清扫动作进行中时暂停/结束短暂禁用。 */
+  _syncButtons() {
+    const state = this._vacuumState();
     const dockBtn = this.shadowRoot.querySelector(".dock");
     if (dockBtn) {
       dockBtn.disabled = ["docked", "returning", "unavailable", "unknown"].includes(state);
+    }
+    if (this._pauseButton) {
+      this._pauseButton.disabled = this._stopping || this._cleaning;
+    }
+    if (this._endButton) {
+      this._endButton.disabled = this._stopping || this._cleaning;
     }
   }
 }
