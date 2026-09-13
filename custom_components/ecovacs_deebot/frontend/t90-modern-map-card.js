@@ -69,7 +69,7 @@ class T90ModernMapCardEditor extends HTMLElement {
         .order-empty { color: var(--secondary-text-color); font-size: 13px; }
       </style>
       <div class="form">
-        <ha-textfield class="title" label="卡片标题"></ha-textfield>
+        <ha-textfield class="title" label="标题（仅全屏窗口顶部显示）"></ha-textfield>
         <ha-entity-picker class="image" label="地图图像实体（必选）"></ha-entity-picker>
         <ha-entity-picker class="vacuum" label="扫地机器人实体（必选）"></ha-entity-picker>
         <ha-textfield class="interval" type="number" min="5" max="300"
@@ -301,13 +301,12 @@ class T90ModernMapCardEditor extends HTMLElement {
 }
 
 const ICONS = {
-  robot: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.2"/><circle cx="12" cy="12" r="2.6"/><path d="M12 3.8v2.4M9 20.2h6"/></svg>`,
-  expand: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/></svg>`,
-  close: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>`,
+  // zoomIn/zoomOut 仅全屏对话框工具条使用（卡片主界面已去掉缩放按钮）
   zoomIn: `<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3M8 11h6M11 8v6"/></svg>`,
   zoomOut: `<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3M8 11h6"/></svg>`,
+  expand: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/></svg>`,
+  close: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>`,
   reset: `<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>`,
-  refresh: `<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/></svg>`,
   play: `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg>`,
   stop: `<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><rect x="6.5" y="6.5" width="11" height="11" rx="2"/></svg>`,
   dock: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11.5 12 4l8 7.5"/><path d="M6.5 10v9h11v-9"/><rect x="9.6" y="13.6" width="4.8" height="3" rx="0.8"/></svg>`,
@@ -442,54 +441,23 @@ class T90ModernMapCard extends HTMLElement {
           background: var(--card-background-color, #fff);
         }
 
-        /* ---------- 头部 ---------- */
-        .header {
-          display: flex; align-items: center; gap: 11px;
-          padding: 14px 16px 12px;
-        }
-        .logo {
-          width: 34px; height: 34px; border-radius: 11px; flex: 0 0 auto;
-          display: flex; align-items: center; justify-content: center; color: #fff;
-          background: linear-gradient(135deg,
-            var(--primary-color, #03a9f4),
-            color-mix(in srgb, var(--primary-color, #03a9f4) 45%, #7c4dff));
-        }
-        .logo svg { width: 19px; height: 19px; }
-        .title {
-          min-width: 0; flex: 1; font-size: 15px; font-weight: 600;
-          letter-spacing: .1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-        }
-        .status {
-          display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;
-          font-size: 12.5px; font-weight: 500; white-space: nowrap;
-          color: var(--status-color, var(--secondary-text-color));
-        }
-        .status .dot {
-          width: 7px; height: 7px; border-radius: 50%;
-          background: var(--status-color, var(--secondary-text-color));
-        }
-        .status.cleaning .dot { animation: t90-modern-pulse 1.4s ease-in-out infinite; }
-        @keyframes t90-modern-pulse {
-          0%, 100% { opacity: 1; transform: scale(1); }
-          50% { opacity: .3; transform: scale(.65); }
-        }
-        .extra-status {
-          display: inline-flex; align-items: center; gap: 10px; flex: 0 0 auto;
-        }
-        .extra-status .status { font-size: 12px; }
-        .ghost-btn {
-          width: 32px; height: 32px; flex: 0 0 auto;
+        /* ---------- 地图 ---------- */
+        .map-wrap { position: relative; margin: 0 12px; }
+        .expand-float {
+          position: absolute; top: 10px; right: 10px; z-index: 2;
+          width: 34px; height: 34px;
           display: inline-flex; align-items: center; justify-content: center;
           border: 0; border-radius: 10px; padding: 0; cursor: pointer;
-          color: var(--secondary-text-color); background: transparent;
+          color: var(--primary-text-color);
+          background: color-mix(in srgb, var(--card-background-color, #fff) 72%, transparent);
+          backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+          box-shadow: 0 1px 6px rgb(0 0 0 / .1);
           transition: background .15s, color .15s;
         }
-        .ghost-btn:hover { color: var(--primary-color); background: color-mix(in srgb, var(--primary-color) 10%, transparent); }
-        .ghost-btn:active { transform: scale(.92); }
-
-        /* ---------- 地图 ---------- */
+        .expand-float:hover { color: var(--primary-color); }
+        .expand-float:active { transform: scale(.92); }
         .viewport {
-          margin: 0 12px; border-radius: 14px; overflow: auto;
+          border-radius: 14px; overflow: auto;
           background:
             radial-gradient(circle at 50% 0%,
               color-mix(in srgb, var(--primary-color, #03a9f4) 6%, transparent), transparent 62%),
@@ -515,6 +483,30 @@ class T90ModernMapCard extends HTMLElement {
         @keyframes t90-modern-spin { to { transform: rotate(360deg); } }
         .error { color: var(--error-color, #f44336); font-size: 13.5px; }
         .map [data-room-id] { cursor: pointer; }
+
+        /* ---------- 状态行（地图下方） ---------- */
+        .status-row {
+          display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+          padding: 10px 18px 0; min-height: 20px;
+        }
+        .status {
+          display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;
+          font-size: 12.5px; font-weight: 500; white-space: nowrap;
+          color: var(--status-color, var(--secondary-text-color));
+        }
+        .status .dot {
+          width: 7px; height: 7px; border-radius: 50%;
+          background: var(--status-color, var(--secondary-text-color));
+        }
+        .status.cleaning .dot { animation: t90-modern-pulse 1.4s ease-in-out infinite; }
+        @keyframes t90-modern-pulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: .3; transform: scale(.65); }
+        }
+        .extra-status {
+          display: inline-flex; align-items: center; gap: 10px; flex: 0 0 auto;
+        }
+        .extra-status .status { font-size: 12px; }
 
         /* ---------- 选择状态栏 ---------- */
         .selection-bar {
@@ -612,11 +604,20 @@ class T90ModernMapCard extends HTMLElement {
           color: var(--primary-color); font-size: 11.5px; text-align: center;
         }
 
-        /* ---------- 底部操作栏 ---------- */
+        /* ---------- 底部操作栏（右侧：定位/回充 + 停止） ---------- */
         .actionbar {
           display: flex; align-items: center; gap: 10px;
-          padding: 12px 16px 14px;
+          padding: 12px 16px 14px; justify-content: flex-end;
         }
+        .ghost-btn {
+          width: 32px; height: 32px; flex: 0 0 auto;
+          display: inline-flex; align-items: center; justify-content: center;
+          border: 0; border-radius: 10px; padding: 0; cursor: pointer;
+          color: var(--secondary-text-color); background: transparent;
+          transition: background .15s, color .15s;
+        }
+        .ghost-btn:hover { color: var(--primary-color); }
+        .ghost-btn:active { transform: scale(.92); }
         .tool-group {
           display: inline-flex; align-items: center; gap: 2px; flex: 0 0 auto;
           padding: 3px; border-radius: 12px;
@@ -628,8 +629,9 @@ class T90ModernMapCard extends HTMLElement {
           background: transparent; color: var(--primary-text-color); cursor: pointer;
           transition: background .15s, color .15s;
         }
-        .tool-btn:hover { color: var(--primary-color); background: color-mix(in srgb, var(--primary-color) 10%, transparent); }
-        .tool-btn:active { transform: scale(.9); }
+        .tool-btn:hover:not(:disabled) { color: var(--primary-color); background: color-mix(in srgb, var(--primary-color) 10%, transparent); }
+        .tool-btn:active:not(:disabled) { transform: scale(.9); }
+        .tool-btn:disabled { opacity: .35; cursor: default; }
         .spacer { flex: 1; }
         .action-btn {
           height: 38px; padding: 0 18px; border: 0; border-radius: 19px; flex: 0 0 auto;
@@ -694,14 +696,14 @@ class T90ModernMapCard extends HTMLElement {
         }
       </style>
       <ha-card>
-        <div class="header">
-          <div class="logo">${ICONS.robot}</div>
-          <div class="title"></div>
-          <span class="extra-status"></span>
-          <div class="status"><span class="dot"></span><span class="status-text"></span></div>
-          <button class="ghost-btn expand" title="全屏查看" aria-label="全屏查看">${ICONS.expand}</button>
+        <div class="map-wrap">
+          <div class="viewport"><div class="map"><div class="loading">正在加载地图</div></div></div>
+          <button class="ghost-btn expand-float" title="全屏查看" aria-label="全屏查看">${ICONS.expand}</button>
         </div>
-        <div class="viewport"><div class="map"><div class="loading">正在加载地图</div></div></div>
+        <div class="status-row">
+          <div class="status"><span class="dot"></span><span class="status-text"></span></div>
+          <span class="extra-status"></span>
+        </div>
         <div class="selection-bar">
           <span class="selection-text">未选择区域 · 点击地图选择（默认清扫全屋）</span>
           <button class="clear-sel" style="display:none">${ICONS.close}清除</button>
@@ -772,14 +774,11 @@ class T90ModernMapCard extends HTMLElement {
           </div>
         </div>
         <div class="actionbar">
+          <span class="spacer"></span>
           <span class="tool-group">
-            <button class="tool-btn zoom-out" title="缩小" aria-label="缩小">${ICONS.zoomOut}</button>
-            <button class="tool-btn zoom-in" title="放大" aria-label="放大">${ICONS.zoomIn}</button>
-            <button class="tool-btn refresh" title="刷新地图和位置" aria-label="刷新地图和位置">${ICONS.refresh}</button>
             <button class="tool-btn locate" title="定位扫地机" aria-label="定位扫地机">${ICONS.locate}</button>
             <button class="tool-btn dock" title="返回基站" aria-label="返回基站">${ICONS.dock}</button>
           </span>
-          <span class="spacer"></span>
           <button class="action-btn stop" disabled>${ICONS.stop}<span>停止</span></button>
         </div>
         <div class="command-status" aria-live="polite"></div>
@@ -802,7 +801,6 @@ class T90ModernMapCard extends HTMLElement {
         </div>
       </dialog>`;
 
-    this.shadowRoot.querySelector(".title").textContent = this._config.title;
     this._mapElement = this.shadowRoot.querySelector(".map");
     this._selectionText = this.shadowRoot.querySelector(".selection-text");
     this._clearButton = this.shadowRoot.querySelector(".clear-sel");
@@ -816,12 +814,8 @@ class T90ModernMapCard extends HTMLElement {
       this._resizeObserver = new ResizeObserver(() => this._applyZoom());
       this._resizeObserver.observe(this._viewport);
     }
-    this._zoomStep = 1;
     this.shadowRoot.querySelector(".dialog-title").textContent = this._config.title;
-    this.shadowRoot.querySelector(".expand").addEventListener("click", () => this._openMapDialog());
-    this.shadowRoot.querySelector(".zoom-out").addEventListener("click", () => this._setZoom(this._zoom - 0.1));
-    this.shadowRoot.querySelector(".zoom-in").addEventListener("click", () => this._setZoom(this._zoom + 0.1));
-    this.shadowRoot.querySelector(".refresh").addEventListener("click", () => this._refreshMap(true));
+    this.shadowRoot.querySelector(".expand-float").addEventListener("click", () => this._openMapDialog());
     this.shadowRoot.querySelector(".dialog-close").addEventListener("click", () => this._dialog.close());
     this.shadowRoot.querySelector(".dialog-zoom-out").addEventListener("click", () => this._setDialogZoom(this._dialogZoom - 0.1));
     this.shadowRoot.querySelector(".dialog-zoom-in").addEventListener("click", () => this._setDialogZoom(this._dialogZoom + 0.1));
@@ -1186,6 +1180,7 @@ class T90ModernMapCard extends HTMLElement {
         ? "发送中…"
         : wholeHouse ? "全屋" : `${this._selectedRooms.size} 个区域`;
     }
+    this._syncButtons();
   }
 
   _cleanParams() {
@@ -1348,8 +1343,28 @@ class T90ModernMapCard extends HTMLElement {
         this._extraStatusElement.append(badge);
       }
     }
+    if (this._stopButton || this.shadowRoot.querySelector(".dock")) {
+      this._syncButtons();
+    }
+  }
+
+  /** 按机器人当前状态同步 停止/返回基站 按钮可按性。
+   *
+   * - 停止（clean_V2 act=stop）：仅在清扫中/已暂停时有意义；
+   *   空闲或在基站时无可停止的任务，置灰。
+   * - 返回基站（charge act=go）：已在基站或正在回充时不可再触发；
+   *   清扫中回充等价于"停止并回充"，允许。
+   */
+  _syncButtons() {
+    const state = this._hass?.states[this._config.vacuum_entity]?.state || "unknown";
     if (this._stopButton) {
-      this._stopButton.disabled = this._stopping || this._cleaning;
+      this._stopButton.disabled =
+        this._stopping || this._cleaning ||
+        !["cleaning", "paused"].includes(state);
+    }
+    const dockBtn = this.shadowRoot.querySelector(".dock");
+    if (dockBtn) {
+      dockBtn.disabled = ["docked", "returning", "unavailable", "unknown"].includes(state);
     }
   }
 }
