@@ -14,6 +14,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import EcovacsConfigEntry
 from .entity import EcovacsEntity
+from .t90_map import add_room_metadata_to_svg
 
 
 async def async_setup_entry(
@@ -61,6 +62,12 @@ class EcovacsMap(
     def image(self) -> bytes | None:
         """Return bytes of image or None."""
         if svg := self._map.get_svg_map():
+            # T90 中国区固件：为 SVG 叠加房间名称标签与选区元数据（地图卡片用）
+            svg = add_room_metadata_to_svg(
+                svg,
+                self._map._event_bus,
+                self._map._map_data._rotation,
+            )
             return svg.encode()
 
         return None

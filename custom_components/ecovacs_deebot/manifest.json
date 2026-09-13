@@ -3,10 +3,11 @@
   "name": "Ecovacs Deebot (T90 PRO and more)",
   "codeowners": ["@summer"],
   "config_flow": true,
-  "documentation": "https://github.com/DeebotUniverse/client.py",
+  "dependencies": ["frontend", "http", "lovelace"],
+  "documentation": "https://github.com/xiamy-summer/ha-ecovacs-deebot",
   "integration_type": "hub",
   "iot_class": "cloud_push",
-  "issue_tracker": "https://github.com/DeebotUniverse/client.py/issues",
+  "issue_tracker": "https://github.com/xiamy-summer/ha-ecovacs-deebot/issues",
   "loggers": ["deebot_client"],
-  "version": "0.1.0"
+  "version": "0.2.0"
 }

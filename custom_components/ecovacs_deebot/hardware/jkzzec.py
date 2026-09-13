@@ -29,10 +29,7 @@ from deebot_client.commands.json.battery import GetBattery
 from deebot_client.commands.json.charge import Charge
 from deebot_client.commands.json.charge_state import GetChargeState
 from deebot_client.commands.json.child_lock import GetChildLock, SetChildLock
-from deebot_client.commands.json.clean import (
-    Clean,
-    CleanArea,
-)
+from deebot_client.commands.json.clean import CleanV2
 from deebot_client.commands.json.clean_count import GetCleanCount, SetCleanCount
 from deebot_client.commands.json.clean_logs import GetCleanLogs
 from deebot_client.commands.json.continuous_cleaning import (
@@ -44,13 +41,9 @@ from deebot_client.commands.json.error import GetError
 from deebot_client.commands.json.fan_speed import GetFanSpeed, SetFanSpeed
 from deebot_client.commands.json.life_span import GetLifeSpan, ResetLifeSpan
 from deebot_client.commands.json.map import (
-    GetCachedMapInfo,
-    GetMajorMap,
     GetMapInfoV2,
-    GetMapSetV2,
     GetMapTrace,
     GetMinorMap,
-    SetMajorMap,
 )
 from deebot_client.commands.json.mop_auto_wash_frequency import (
     GetMopAutoWashFrequency,
@@ -59,7 +52,6 @@ from deebot_client.commands.json.mop_auto_wash_frequency import (
 from deebot_client.commands.json.network import GetNetInfo
 from deebot_client.commands.json.ota import GetOta, SetOta
 from deebot_client.commands.json.play_sound import PlaySound
-from deebot_client.commands.json.pos import GetPos
 from deebot_client.commands.json.relocation import SetRelocationState
 from deebot_client.commands.json.stats import GetStats, GetTotalStats
 from deebot_client.commands.json.sweep_mode import GetSweepMode, SetSweepMode
@@ -73,6 +65,8 @@ from deebot_client.commands.json.water_info import GetWaterInfo, SetWaterInfo
 from deebot_client.commands.json.work_mode import GetWorkMode, SetWorkMode
 from deebot_client.commands.json.work_state import GetWorkState
 from deebot_client.const import DataType
+
+from ..t90_map import GetMapBootstrap, GetMapSetV2T90, T90CleanAreaV2
 from deebot_client.events import (
     AvailabilityEvent,
     BatteryEvent,
@@ -125,7 +119,7 @@ def get_device_info() -> StaticDeviceInfo:
             battery=CapabilityEvent(BatteryEvent, [GetBattery()]),
             charge=CapabilityExecute(Charge),
             clean=CapabilityClean(
-                action=CapabilityCleanAction(command=Clean, area=CleanArea),
+                action=CapabilityCleanAction(command=CleanV2, area=T90CleanAreaV2),
                 continuous=CapabilitySetEnable(
                     ContinuousCleaningEvent,
                     [GetContinuousCleaning()],
@@ -197,15 +191,18 @@ def get_device_info() -> StaticDeviceInfo:
                 reset=ResetLifeSpan,
             ),
             map=CapabilityMap(
-                cached_info=CapabilityEvent(CachedMapInfoEvent, [GetCachedMapInfo()]),
+                # T90 中国区固件走 getInfo 复合命令引导，联动刷新地图/位置/房间
+                cached_info=CapabilityEvent(CachedMapInfoEvent, [GetMapBootstrap()]),
                 changed=CapabilityEvent(MapChangedEvent, []),
                 info=CapabilityExecute(GetMapInfoV2),
-                major=CapabilitySet(MajorMapEvent, [GetMajorMap()], SetMajorMap),
+                # T90 不支持 getMajorMap，地图几何由 MapInfo V2 提供
+                major=CapabilityEvent(MajorMapEvent, []),
                 minor=CapabilityExecute(GetMinorMap),
-                position=CapabilityEvent(PositionsEvent, [GetPos()]),
+                # 引导命令在发现地图 ID 后刷新位置与房间
+                position=CapabilityEvent(PositionsEvent, []),
                 relocation=CapabilityExecute(SetRelocationState),
-                rooms=CapabilityEvent(RoomsEvent, [GetCachedMapInfo()]),
-                set=CapabilityExecute(GetMapSetV2),
+                rooms=CapabilityEvent(RoomsEvent, []),
+                set=CapabilityExecute(GetMapSetV2T90),
                 trace=CapabilityEvent(MapTraceEvent, [GetMapTrace()]),
             ),
             network=CapabilityEvent(NetworkInfoEvent, [GetNetInfo()]),

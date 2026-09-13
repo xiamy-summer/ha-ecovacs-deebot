@@ -2,7 +2,7 @@
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
 ![HA Version](https://img.shields.io/badge/Home%20Assistant-2024.7%2B-blue)
-![License](https://img.shields.io/badge/License-MIT-green)
+![License](https://img.shields.io/badge/License-GPL--3.0-green)
 
 非官方的**科沃斯（Ecovacs）扫地机器人 Home Assistant 集成**，专为官方集成不支持的新机型而生——内置机型定义，登录即用，无需修改容器内任何文件。
 
@@ -151,8 +151,9 @@ Unofficial Home Assistant integration for Ecovacs DEEBOT robots, focused on **ne
 
 - [DeebotUniverse/client.py](https://github.com/DeebotUniverse/client.py) — 核心协议库
 - [Home Assistant Core](https://github.com/home-assistant/core) — 官方 ecovacs 集成模板
+- [lifujie25/ha-ecovacs-t90-pro](https://github.com/lifujie25/ha-ecovacs-t90-pro) — v0.2.0 的中国区 T90 地图协议兼容实现（`t90_map.py`、地图卡片）移植自该项目
 - [HACS](https://hacs.xyz/)
 
 ## 📄 许可证
 
-[MIT](LICENSE) — 本项目与科沃斯（Ecovacs）官方无关，仅供学习交流使用。
+[GPL-3.0](LICENSE)（自 v0.2.0 起；v0.1.0 为 MIT）——因引入 GPL-3.0 许可的移植代码，本项目整体采用 GPL-3.0。本项目与科沃斯（Ecovacs）官方无关，仅供学习交流使用。
