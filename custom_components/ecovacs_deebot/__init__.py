@@ -18,6 +18,7 @@ from homeassistant.helpers.typing import ConfigType
 
 from .const import (
     CARD_FILENAME,
+    CARD_LEGACY_FILENAMES,
     CARD_STATIC_URL,
     DATA_EXTRA_CARD_REGISTERED,
     DATA_STATIC_PATH_REGISTERED,
@@ -81,6 +82,14 @@ async def _async_register_map_card(hass: HomeAssistant) -> None:
     resources = lovelace_data.resources if lovelace_data else None
     if resources is not None and hasattr(resources, "async_create_item"):
         await resources.async_get_info()
+        # 清理历史卡片文件名对应的旧资源，避免新旧并存
+        for resource in list(resources.async_items()):
+            url = resource.get(CONF_URL, "")
+            if any(
+                url.startswith(f"{CARD_STATIC_URL}/{legacy}")
+                for legacy in CARD_LEGACY_FILENAMES
+            ):
+                await resources.async_delete_item(resource["id"])
         bundled_resources = [
             resource
             for resource in resources.async_items()
@@ -153,5 +162,5 @@ async def async_remove_entry(hass: HomeAssistant, entry: EcovacsConfigEntry) -> 
 
     await resources.async_get_info()
     for resource in list(resources.async_items()):
-        if resource.get(CONF_URL, "").startswith(f"{CARD_STATIC_URL}/{CARD_FILENAME}"):
+        if resource.get(CONF_URL, "").startswith(f"{CARD_STATIC_URL}/"):
             await resources.async_delete_item(resource["id"])
