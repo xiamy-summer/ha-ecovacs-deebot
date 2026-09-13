@@ -119,6 +119,7 @@ const ICONS = {
   play: `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg>`,
   stop: `<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><rect x="6.5" y="6.5" width="11" height="11" rx="2"/></svg>`,
   check: `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.5l5 5 10-11"/></svg>`,
+  swap: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4v13m0 0l-3.5-3.5M7 17l3.5-3.5M17 20V7m0 0l-3.5 3.5M17 7l3.5 3.5"/></svg>`,
 };
 
 class T90ModernMapCard extends HTMLElement {
@@ -286,11 +287,17 @@ class T90ModernMapCard extends HTMLElement {
         .error { color: var(--error-color, #f44336); font-size: 13.5px; }
 
         /* ---------- 区域选择 ---------- */
-        .rooms {
-          display: flex; align-items: center; gap: 7px;
-          padding: 12px 16px 4px; overflow-x: auto; scrollbar-width: none;
-        }
+        .rooms { display: flex; align-items: center; gap: 7px;
+          padding: 12px 16px 4px; overflow-x: auto; scrollbar-width: none; }
         .rooms::-webkit-scrollbar { display: none; }
+        .sort-toggle.active {
+          color: var(--primary-color);
+          background: color-mix(in srgb, var(--primary-color) 12%, transparent);
+        }
+        .rooms.sorting .room-chip {
+          touch-action: none; cursor: grabbing;
+          border-color: color-mix(in srgb, var(--primary-color) 45%, transparent);
+        }
         .rooms-label {
           flex: 0 0 auto; color: var(--secondary-text-color); font-size: 12.5px; margin-right: 3px;
         }
@@ -434,7 +441,7 @@ class T90ModernMapCard extends HTMLElement {
           <button class="ghost-btn expand" title="全屏查看" aria-label="全屏查看">${ICONS.expand}</button>
         </div>
         <div class="viewport"><div class="map"><div class="loading">正在加载地图</div></div></div>
-        <div class="rooms"><span class="rooms-label">未选择区域</span></div>
+        <div class="rooms"><button class="tool-btn sort-toggle" title="排序模式" aria-label="排序模式">${ICONS.swap}</button><span class="rooms-label">未选择区域</span></div>
         <div class="params">
           <span class="param">
             <span class="param-label">吸力</span>
@@ -495,6 +502,13 @@ class T90ModernMapCard extends HTMLElement {
     this._dialog = this.shadowRoot.querySelector(".map-dialog");
     this._dialogMapElement = this.shadowRoot.querySelector(".dialog-map");
     this._extraStatusElement = this.shadowRoot.querySelector(".extra-status");
+    this._roomsElement = this.shadowRoot.querySelector(".rooms");
+    this._sorting = false;
+    this.shadowRoot.querySelector(".sort-toggle").addEventListener("click", () => {
+      this._sorting = !this._sorting;
+      this.shadowRoot.querySelector(".sort-toggle").classList.toggle("active", this._sorting);
+      this._roomsElement.classList.toggle("sorting", this._sorting);
+    });
     this._viewport = this.shadowRoot.querySelector(".viewport");
     if (!this._resizeObserver) {
       this._resizeObserver = new ResizeObserver(() => this._applyZoom());
@@ -572,7 +586,8 @@ class T90ModernMapCard extends HTMLElement {
       this._mapLoaded = true;
       this._availableRooms.clear();
       this._bindRoomEvents(this._mapElement, true);
-      this._applyZoom();
+      // 等浏览器完成一帧布局后再计算自适应尺寸，避免卡片宽度未就绪导致初始尺寸偏差
+      requestAnimationFrame(() => this._applyZoom());
       if (this._dialog?.open) this._syncDialogMap();
       this._applySelection();
     } catch (error) {
@@ -708,33 +723,50 @@ class T90ModernMapCard extends HTMLElement {
       const name = this._availableRooms.get(id);
       const chip = document.createElement("button");
       chip.className = "room-chip";
+      chip.dataset.roomId = String(id);
       const selected = this._selectedRooms.has(id);
       chip.classList.toggle("selected", selected);
       if (selected) chip.insertAdjacentHTML("afterbegin", ICONS.check);
       chip.append(name);
-      chip.addEventListener("click", () => this._toggleRoom(id, name));
-      // 拖拽排序
-      chip.draggable = true;
-      chip.addEventListener("dragstart", (event) => {
-        this._dragId = id;
-        chip.classList.add("dragging");
-        event.dataTransfer.effectAllowed = "move";
-        try { event.dataTransfer.setData("text/plain", String(id)); } catch {}
+      chip.addEventListener("click", () => {
+        if (this._sorting) return;
+        this._toggleRoom(id, name);
       });
-      chip.addEventListener("dragend", () => {
-        this._dragId = null;
-        chip.classList.remove("dragging");
-      });
-      chip.addEventListener("dragover", (event) => event.preventDefault());
-      chip.addEventListener("drop", (event) => {
+      // 排序模式：Pointer 事件拖拽（触屏与鼠标通用）
+      chip.addEventListener("pointerdown", (event) => {
+        if (!this._sorting || event.button !== 0) return;
         event.preventDefault();
-        if (this._dragId === null || this._dragId === id) return;
-        const order = this._orderedRoomIds();
-        order.splice(order.indexOf(this._dragId), 1);
-        order.splice(order.indexOf(id), 0, this._dragId);
-        this._roomOrder = order;
-        this._saveRoomOrder();
-        this._applySelection();
+        const container = this._roomsElement;
+        chip.setPointerCapture(event.pointerId);
+        chip.classList.add("dragging");
+        let moved = false;
+        const onMove = (moveEvent) => {
+          moved = true;
+          const el = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY);
+          const target = el?.closest?.(".room-chip");
+          if (!target || target === chip || target.parentElement !== container) return;
+          const rect = target.getBoundingClientRect();
+          const insertBefore = moveEvent.clientX < rect.left + rect.width / 2;
+          container.insertBefore(chip, insertBefore ? target : target.nextSibling);
+        };
+        const onUp = () => {
+          chip.classList.remove("dragging");
+          chip.removeEventListener("pointermove", onMove);
+          chip.removeEventListener("pointerup", onUp);
+          chip.removeEventListener("pointercancel", onUp);
+          if (!moved) return;
+          const order = [...container.querySelectorAll(".room-chip:not(.clear)")]
+            .map((el) => Number(el.dataset.roomId))
+            .filter((num) => this._availableRooms.has(num));
+          if (order.length) {
+            this._roomOrder = order;
+            this._saveRoomOrder();
+          }
+          this._applySelection();
+        };
+        chip.addEventListener("pointermove", onMove);
+        chip.addEventListener("pointerup", onUp);
+        chip.addEventListener("pointercancel", onUp);
       });
       this._roomsElement.append(chip);
     }
