@@ -1,5 +1,6 @@
 """Support for Ecovacs Deebot vacuums (T90 PRO and more)."""
 
+import hashlib
 import logging
 from pathlib import Path
 
@@ -17,7 +18,6 @@ from homeassistant.helpers.typing import ConfigType
 
 from .const import (
     CARD_FILENAME,
-    CARD_MODULE_URL,
     CARD_STATIC_URL,
     DATA_EXTRA_CARD_REGISTERED,
     DATA_STATIC_PATH_REGISTERED,
@@ -28,6 +28,16 @@ from .services import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
 _FRONTEND_DIR = Path(__file__).parent / "frontend"
+
+
+def _card_module_url() -> str:
+    """Build the card URL with a content hash to bust browser caches."""
+    digest = "dev"
+    try:
+        digest = hashlib.md5((_FRONTEND_DIR / CARD_FILENAME).read_bytes()).hexdigest()[:8]
+    except OSError:
+        _LOGGER.warning("Map card file %s is missing", CARD_FILENAME)
+    return f"{CARD_STATIC_URL}/{CARD_FILENAME}?v={digest}"
 
 PLATFORMS = [
     Platform.BINARY_SENSOR,
@@ -80,18 +90,18 @@ async def _async_register_map_card(hass: HomeAssistant) -> None:
         ]
         if bundled_resources:
             resource = bundled_resources[0]
-            if resource.get(CONF_URL) != CARD_MODULE_URL:
+            if resource.get(CONF_URL) != _card_module_url():
                 await resources.async_update_item(
                     resource["id"],
                     {
-                        CONF_URL: CARD_MODULE_URL,
+                        CONF_URL: _card_module_url(),
                         CONF_RESOURCE_TYPE_WS: "module",
                     },
                 )
         else:
             await resources.async_create_item(
                 {
-                    CONF_URL: CARD_MODULE_URL,
+                    CONF_URL: _card_module_url(),
                     CONF_RESOURCE_TYPE_WS: "module",
                 }
             )
@@ -102,7 +112,7 @@ async def _async_register_map_card(hass: HomeAssistant) -> None:
         "for the current frontend session only"
     )
     if not domain_data.get(DATA_EXTRA_CARD_REGISTERED):
-        frontend.add_extra_js_url(hass, CARD_MODULE_URL)
+        frontend.add_extra_js_url(hass, _card_module_url())
         domain_data[DATA_EXTRA_CARD_REGISTERED] = True
 
 
@@ -130,7 +140,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: EcovacsConfigEntry) -> 
         if isinstance(entries, dict):
             entries.pop(entry.entry_id, None)
             if entries.pop(DATA_EXTRA_CARD_REGISTERED, False):
-                frontend.remove_extra_js_url(hass, CARD_MODULE_URL)
+                frontend.remove_extra_js_url(hass, _card_module_url())
     return unloaded
 
 

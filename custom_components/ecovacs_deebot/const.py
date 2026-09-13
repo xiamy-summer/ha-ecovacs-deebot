@@ -8,9 +8,9 @@ from deebot_client.events import LifeSpan
 DOMAIN = "ecovacs_deebot"
 
 # 地图卡片前端资源（内置，无需手动添加 Lovelace 资源）
+# 资源 URL 由 __init__.py 按文件内容哈希动态生成，自动破除浏览器缓存
 CARD_STATIC_URL = "/ecovacs_deebot"
 CARD_FILENAME = "ecovacs-t90-map-card.js"
-CARD_MODULE_URL = f"{CARD_STATIC_URL}/{CARD_FILENAME}?v=0.2.0"
 DATA_STATIC_PATH_REGISTERED = "card_static_path_registered"
 DATA_EXTRA_CARD_REGISTERED = "card_extra_js_registered"
 
