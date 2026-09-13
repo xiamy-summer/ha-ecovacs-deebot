@@ -30,6 +30,7 @@ import base64
 from dataclasses import dataclass
 from html import escape
 import json
+import logging
 import re
 from typing import TYPE_CHECKING, Any
 from weakref import WeakKeyDictionary
@@ -59,6 +60,8 @@ except ImportError:  # pragma: no cover
     _zstandard = None
 
 _ZSTD_MAX_OUTPUT = 1 << 20
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -360,6 +363,25 @@ class GetQuickCommandT90(
 
     def __init__(self) -> None:
         super().__init__({"type": "1,2"})
+
+    def _handle_response(
+        self, event_bus: EventBus, response: dict[str, Any]
+    ) -> HandlingResult:
+        result = super()._handle_response(event_bus, response)
+        if result.state is HandlingState.SUCCESS:
+            count = len(_SCENARIOS.get(event_bus, ()))
+            if count:
+                _LOGGER.info("getQuickCommand：获取到 %d 个清洁场景", count)
+            else:
+                _LOGGER.info("getQuickCommand：成功但未返回任何场景（App 里可能没有保存快捷指令）")
+        else:
+            _LOGGER.warning(
+                "getQuickCommand 请求未成功：state=%s args=%s（若持续出现，"
+                "说明该固件可能不支持场景发现，场景实体将保持无选项）",
+                result.state,
+                result.args,
+            )
+        return result
 
     @classmethod
     def _handle_body_data_list(
