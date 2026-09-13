@@ -167,6 +167,9 @@
           "smart": "智能"
         }
       },
+      "clean_scenario": {
+        "name": "清洁场景"
+      },
       "water_amount": {
         "name": "水量",
         "state": {
@@ -349,8 +352,14 @@
     }
   },
   "exceptions": {
+    "vacuum_freeclean_invalid": {
+      "message": "freeClean 参数无效：{error}"
+    },
     "vacuum_raw_get_positions_not_supported": {
       "message": "不支持获取充电座和设备本身的位置"
+    },
+    "vacuum_scenario_not_found": {
+      "message": "未找到场景：{scenario}。可先调用 get_clean_scenarios 刷新场景列表"
     },
     "vacuum_send_command_not_supported": {
       "message": "{name} 不支持 {command} 命令"
@@ -371,9 +380,23 @@
     }
   },
   "services": {
+    "get_clean_scenarios": {
+      "description": "从设备获取 App 保存的快捷指令（清洁场景）列表。",
+      "name": "获取清洁场景"
+    },
     "raw_get_positions": {
       "description": "获取包含充电座和设备本身位置的原始响应。",
       "name": "获取原始位置"
+    },
+    "run_scenario": {
+      "description": "按名称或 qcid 重放 App 保存的清洁场景（快捷指令）。",
+      "name": "运行清洁场景",
+      "fields": {
+        "scenario": {
+          "description": "场景名称或 qcid。",
+          "name": "场景"
+        }
+      }
     }
   }
 }

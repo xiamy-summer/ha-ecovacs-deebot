@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import logging
 from typing import TYPE_CHECKING, Any, override
 
 from deebot_client.capabilities import CapabilityMap, CapabilitySet, CapabilitySetTypes
@@ -23,7 +24,11 @@ from .entity import (
     EcovacsDescriptionEntity,
     EcovacsEntity,
 )
+from .freeclean import FreeCleanError, assert_valid_value
+from .t90_map import ScenariosEvent, T90FreeCleanV2, get_scenarios
 from .util import get_name_key, get_supported_entities
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -88,6 +93,12 @@ async def async_setup_entry(
         for device in controller.devices
         if (map_cap := device.capabilities.map)
         and isinstance(map_cap.major, CapabilitySet)
+    )
+    # 清洁场景选择实体（App 快捷指令重放）
+    entities.extend(
+        EcovacsScenarioSelectEntity(device)
+        for device in controller.devices
+        if device.capabilities.map
     )
     if entities:
         async_add_entities(entities)
@@ -207,3 +218,62 @@ class EcovacsActiveMapSelectEntity(
         await self._device.execute_command(
             self._capability.major.set(self._option_to_id[option])
         )
+
+
+class EcovacsScenarioSelectEntity(EcovacsEntity[None], SelectEntity):
+    """清洁场景选择实体：列出 App 快捷指令，选择即重放。"""
+
+    _always_available = True
+
+    entity_description = SelectEntityDescription(
+        key="clean_scenario",
+        translation_key="clean_scenario",
+        icon="mdi:bookmark-music-outline",
+        entity_category=EntityCategory.CONFIG,
+    )
+
+    def __init__(self, device: Device, **kwargs: Any) -> None:
+        """Initialize entity."""
+        super().__init__(device, None, **kwargs)
+        self._scenarios: tuple[dict[str, Any], ...] = get_scenarios(device.events)
+        self._sync_options()
+
+    def _sync_options(self) -> None:
+        self._attr_options = [str(item["name"]) for item in self._scenarios]
+
+    @override
+    async def async_added_to_hass(self) -> None:
+        """Set up the event listeners now that hass is ready."""
+        await super().async_added_to_hass()
+
+        async def on_scenarios(event: ScenariosEvent) -> None:
+            self._scenarios = event.scenarios
+            self._sync_options()
+            if (
+                self._attr_current_option is not None
+                and self._attr_current_option not in self._attr_options
+            ):
+                self._attr_current_option = None
+            self.async_write_ha_state()
+
+        self._subscribe(ScenariosEvent, on_scenarios)
+
+    @override
+    async def async_select_option(self, option: str) -> None:
+        """Replay the selected scenario on the device."""
+        entry = next(
+            (item for item in self._scenarios if str(item["name"]) == option),
+            None,
+        )
+        if entry is None:
+            _LOGGER.warning("Scenario %s not found, skipping", option)
+            return
+        try:
+            value = assert_valid_value(entry["content"])
+        except FreeCleanError as error:
+            _LOGGER.warning("Scenario %s has invalid content: %s", option, error)
+            return
+        await self._device.execute_command(T90FreeCleanV2(value))
+        # 场景重放不是持久状态，选择后回到未选择
+        self._attr_current_option = None
+        self.async_write_ha_state()

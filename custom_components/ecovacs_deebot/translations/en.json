@@ -167,6 +167,9 @@
           "smart": "Smart"
         }
       },
+      "clean_scenario": {
+        "name": "Clean scenario"
+      },
       "water_amount": {
         "name": "Water amount",
         "state": {
@@ -349,8 +352,14 @@
     }
   },
   "exceptions": {
+    "vacuum_freeclean_invalid": {
+      "message": "Invalid freeClean parameter: {error}"
+    },
     "vacuum_raw_get_positions_not_supported": {
       "message": "Retrieving the positions of the chargers and the device itself is not supported"
+    },
+    "vacuum_scenario_not_found": {
+      "message": "Scenario not found: {scenario}. Call get_clean_scenarios first to refresh the scenario list"
     },
     "vacuum_send_command_not_supported": {
       "message": "The {command} command is not supported by {name}"
@@ -371,9 +380,23 @@
     }
   },
   "services": {
+    "get_clean_scenarios": {
+      "description": "Fetch the App quick commands (clean scenarios) from the device.",
+      "name": "Get clean scenarios"
+    },
     "raw_get_positions": {
       "description": "Retrieves a raw response containing the positions of the chargers and the device itself.",
       "name": "Get raw positions"
+    },
+    "run_scenario": {
+      "description": "Replay a saved App quick command (clean scenario) by name or qcid.",
+      "name": "Run clean scenario",
+      "fields": {
+        "scenario": {
+          "description": "Scenario name or qcid.",
+          "name": "Scenario"
+        }
+      }
     }
   }
 }

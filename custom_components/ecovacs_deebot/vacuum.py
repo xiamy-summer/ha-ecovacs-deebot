@@ -30,6 +30,8 @@ from homeassistant.util import slugify
 from . import EcovacsConfigEntry
 from .const import DOMAIN
 from .entity import EcovacsEntity
+from .freeclean import FreeCleanError, assert_valid_value, build_value
+from .t90_map import GetQuickCommandT90, T90FreeCleanV2, get_scenarios
 from .util import get_name_key
 
 _LOGGER = logging.getLogger(__name__)
@@ -238,6 +240,29 @@ class EcovacsVacuum(
                 )
 
             if command == "spot_area":
+                # 可选扩展参数：吸力/水量/拖地模式 → 走 9 字段 freeClean 扩展格式
+                suction = params.get("suction")
+                water = params.get("water")
+                mop_type = params.get("mop_type")
+                passes = params.get("passes", 1)
+                if suction or water is not None or mop_type:
+                    effective_suction = suction or self._attr_fan_speed or "quiet"
+                    try:
+                        value = build_value(
+                            params["rooms"],
+                            passes=passes,
+                            suction=effective_suction,
+                            workmode=mop_type or "vacuum",
+                            water=water,
+                        )
+                    except FreeCleanError as error:
+                        raise ServiceValidationError(
+                            translation_domain=DOMAIN,
+                            translation_key="vacuum_freeclean_invalid",
+                            translation_placeholders={"error": str(error)},
+                        ) from error
+                    await self._device.execute_command(T90FreeCleanV2(value))
+                    return
                 await self._device.execute_command(
                     self._capability.clean.action.area(
                         CleanMode.SPOT_AREA,
@@ -273,6 +298,52 @@ class EcovacsVacuum(
             )
 
         return await self._device.execute_command(position_commands[0])
+
+    async def async_get_scenarios(self) -> list[dict[str, Any]]:
+        """Fetch App quick commands (clean scenarios) from the device."""
+        _LOGGER.debug("async_get_scenarios")
+        await self._device.execute_command(GetQuickCommandT90())
+        return list(get_scenarios(self._device.events))
+
+    async def async_run_scenario(self, scenario: str) -> None:
+        """Replay a saved App quick command by name or qcid."""
+        scenarios = get_scenarios(self._device.events)
+        entry = next(
+            (
+                item
+                for item in scenarios
+                if item["name"] == scenario or str(item["qcid"]) == scenario
+            ),
+            None,
+        )
+        if entry is None:
+            # 缓存未命中时先刷新一次场景列表再重试
+            scenarios = await self.async_get_scenarios()
+            entry = next(
+                (
+                    item
+                    for item in scenarios
+                    if item["name"] == scenario or str(item["qcid"]) == scenario
+                ),
+                None,
+            )
+        if entry is None:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="vacuum_scenario_not_found",
+                translation_placeholders={"scenario": scenario},
+            )
+
+        try:
+            value = assert_valid_value(entry["content"])
+        except FreeCleanError as error:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="vacuum_freeclean_invalid",
+                translation_placeholders={"error": str(error)},
+            ) from error
+
+        await self._device.execute_command(T90FreeCleanV2(value))
 
     @callback
     def _check_segments_changed(self) -> None:

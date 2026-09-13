@@ -1,0 +1,104 @@
+blueprint:
+  name: 科沃斯 T90 - 定时区域清扫
+  description: >-
+    在指定时间对选定房间执行区域清扫（freeClean 扩展格式，支持指定吸力与拖地模式）。
+    仅在机器人安全停靠/空闲时触发，可指定每周执行日，并在选定星期几改为"扫后拖"模式。
+    Ported from Osezno-byte/ecovacs-omni-ha (MIT), adapted to this integration.
+  domain: automation
+  author: ha-ecovacs-deebot
+  input:
+    vacuum_entity:
+      name: 扫地机器人
+      description: 本集成下的扫地机器人实体。
+      selector:
+        entity:
+          domain: vacuum
+          integration: ecovacs_deebot
+    rooms:
+      name: 房间（区域 ID）
+      description: 要清扫的区域 ID，逗号分隔，例如 "6,11,8"。ID 可在地图卡片或 vacuum 实体的 rooms 属性中查看。
+      default: ""
+      selector:
+        text:
+    clean_time:
+      name: 时间
+      description: 开始清扫的时间。
+      default: "01:35:00"
+      selector:
+        time:
+    days:
+      name: 执行日
+      description: 每周哪些天执行清扫。
+      default: [mon, tue, wed, thu, fri, sat, sun]
+      selector:
+        select:
+          multiple: true
+          options:
+            - { label: 周一, value: mon }
+            - { label: 周二, value: tue }
+            - { label: 周三, value: wed }
+            - { label: 周四, value: thu }
+            - { label: 周五, value: fri }
+            - { label: 周六, value: sat }
+            - { label: 周日, value: sun }
+    suction:
+      name: 吸力
+      description: 本次清扫使用的吸力等级。
+      default: quiet
+      selector:
+        select:
+          options:
+            - { label: 安静, value: quiet }
+            - { label: 标准, value: normal }
+            - { label: 强力, value: max }
+            - { label: 强力+, value: max_plus }
+    mop_days:
+      name: 扫后拖执行日
+      description: >-
+        这些天用"扫后拖"模式代替纯扫地。留空则始终纯扫地。
+      default: []
+      selector:
+        select:
+          multiple: true
+          options:
+            - { label: 周一, value: mon }
+            - { label: 周二, value: tue }
+            - { label: 周三, value: wed }
+            - { label: 周四, value: thu }
+            - { label: 周五, value: fri }
+            - { label: 周六, value: sat }
+            - { label: 周日, value: sun }
+
+mode: single
+
+trigger:
+  - platform: time
+    at: !input clean_time
+
+variables:
+  rooms: !input rooms
+  suction: !input suction
+  days: !input days
+  mop_days: !input mop_days
+  today: "{{ now().strftime('%a') | lower }}"
+
+condition:
+  - condition: state
+    entity_id: !input vacuum_entity
+    state:
+      - docked
+      - idle
+  - condition: template
+    value_template: "{{ today in days }}"
+  - condition: template
+    value_template: "{{ rooms | trim | length > 0 }}"
+
+action:
+  - service: vacuum.send_command
+    data:
+      entity_id: !input vacuum_entity
+      command: spot_area
+      params:
+        rooms: "{{ rooms | trim | split(',') | map('trim') | map('int') | list }}"
+        suction: "{{ suction }}"
+        mop_type: "{{ 'mop_after_vacuum' if today in mop_days else 'vacuum' }}"

@@ -5,38 +5,60 @@ Portions of this module are ported from:
   (custom_components/ecovacs_t90_patch/map.py, GPL-3.0)
   Copyright (c) lifujie25
 
+Additional protocol knowledge (freeClean 9-field format, getQuickCommand
+scenarios, zstd subsets fallback) ported from:
+  https://github.com/Osezno-byte/ecovacs-omni-ha (MIT License)
+  Copyright (c) Osezno-byte
+
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, version 3 of the License.
 
 针对中国区 T90 系固件的差异：
 - 使用复合命令 ``getInfo``（getCachedMapInfo + getRobotState + getWorkState）
-  作为地图引导入口，并联动触发地图集/位置/房间刷新；
-- 房间子集使用中国区固件的 12 字段格式（官方库只识别 10/11 字段）；
+  作为地图引导入口，并联动触发地图集/位置/房间/场景刷新；
+- 房间子集使用中国区固件的 12 字段格式（官方库只识别 10/11 字段），
+  并支持 base64+zstd 压缩 subsets 的回退解析（其他机型/固件变体）；
 - 位置查询使用 ``getPos_V2``（带 mid 参数）；
-- 旧版 ``getMajorMap`` 命令不受支持，不下发。
+- 旧版 ``getMajorMap`` 命令不受支持，不下发；
+- 场景（快捷指令）通过 ``getQuickCommand`` 发现，可原样重放。
 """
 
 from __future__ import annotations
 
-import re
+import base64
 from dataclasses import dataclass
 from html import escape
+import json
+import re
 from typing import TYPE_CHECKING, Any
 from weakref import WeakKeyDictionary
 
 from deebot_client.commands.json.common import JsonCommandWithMessageHandling
-from deebot_client.commands.json.clean import CleanAreaV2
+from deebot_client.commands.json.clean import CleanAreaV2, CleanV2
 from deebot_client.commands.json.map import GetMapSetV2
 from deebot_client.commands.json.pos import GetPos
 from deebot_client.events import MapSetType, RoomsEvent
-from deebot_client.message import HandlingResult, HandlingState, MessageBodyDataDict
+from deebot_client.events.base import Event
+from deebot_client.message import (
+    HandlingResult,
+    HandlingState,
+    MessageBodyDataDict,
+    MessageBodyDataList,
+)
 from deebot_client.messages.json.map.cached_map_info import OnCachedMapInfo
-from deebot_client.models import CleanMode, Room
+from deebot_client.models import CleanAction, CleanMode, Room
 from deebot_client.rs.map import RotationAngle
 
 if TYPE_CHECKING:
     from deebot_client.event_bus import EventBus
+
+try:  # zstd 房间解析回退为可选能力，缺少依赖时静默降级
+    import zstandard as _zstandard
+except ImportError:  # pragma: no cover
+    _zstandard = None
+
+_ZSTD_MAX_OUTPUT = 1 << 20
 
 
 @dataclass(frozen=True)
@@ -50,7 +72,41 @@ class T90Room:
 
 
 _ROOMS: WeakKeyDictionary[EventBus, tuple[T90Room, ...]] = WeakKeyDictionary()
+_SCENARIOS: WeakKeyDictionary[EventBus, tuple[dict[str, Any], ...]] = WeakKeyDictionary()
 _ROOM_PATH_RE = re.compile(r"(?:^|\s)r\d+(?:\s|$)")
+
+
+@dataclass(frozen=True)
+class ScenariosEvent(Event):
+    """App 快捷指令（清洁场景）列表更新事件。"""
+
+    scenarios: tuple[dict[str, Any], ...] = ()
+
+
+def get_scenarios(event_bus: EventBus) -> tuple[dict[str, Any], ...]:
+    """Return the last known App quick commands for this device."""
+    return _SCENARIOS.get(event_bus, ())
+
+
+def _decode_zstd_subsets(subsets: str) -> list[list[Any]] | None:
+    """Decode a base64+zstd ``subsets`` blob (non-China firmware variant).
+
+    解压后为 JSON 数组，每行代表一个房间：
+    ``[id, name, roomType, neighborIds, <未知>, x, y, ...]``
+    """
+    if _zstandard is None:
+        return None
+    try:
+        raw = base64.b64decode(subsets)
+        rows = _zstandard.ZstdDecompressor().decompress(
+            raw, max_output_size=_ZSTD_MAX_OUTPUT
+        )
+        decoded = json.loads(rows)
+    except Exception:  # noqa: BLE001 - 固件变体差异多，全部静默降级
+        return None
+    if isinstance(decoded, list) and all(isinstance(row, list) for row in decoded):
+        return decoded
+    return None
 
 
 def _rotate_point(x: float, y: float, rotation: RotationAngle) -> tuple[float, float]:
@@ -125,16 +181,49 @@ def add_room_metadata_to_svg(
 
 
 class GetMapSetV2T90(GetMapSetV2):
-    """解析中国区 T90 固件的 12 字段房间格式。"""
+    """解析中国区 T90 固件的 12 字段房间格式（含 zstd 压缩回退）。"""
+
+    @classmethod
+    def _notify_rooms(
+        cls,
+        event_bus: EventBus,
+        map_id: str,
+        rooms: tuple[T90Room, ...],
+    ) -> None:
+        _ROOMS[event_bus] = rooms
+        event_bus.notify(
+            RoomsEvent(
+                map_id,
+                [Room(room.name, room.id, f"{room.x},{room.y}") for room in rooms],
+            ),
+        )
 
     @classmethod
     def _handle_rooms_subsets(
         cls,
         event_bus: EventBus,
         data: dict[str, Any],
-        subsets: list[list[str]],
+        subsets: list[list[str]] | str,
         map_id: str,
     ) -> HandlingResult:
+        if isinstance(subsets, str) and subsets:
+            # 其他固件变体：subsets 为 base64+zstd 压缩 blob
+            if (rows := _decode_zstd_subsets(subsets)) and all(
+                len(row) >= 7 for row in rows
+            ):
+                rooms = tuple(
+                    T90Room(
+                        id=int(row[0]),
+                        name=str(row[1]).strip() or f"区域 {row[0]}",
+                        x=float(row[5]),
+                        y=float(row[6]),
+                    )
+                    for row in rows
+                )
+                cls._notify_rooms(event_bus, map_id, rooms)
+                return HandlingResult.success()
+            return super()._handle_rooms_subsets(event_bus, data, subsets, map_id)
+
         if subsets and all(len(subset) >= 7 for subset in subsets):
             rooms = tuple(
                 T90Room(
@@ -145,13 +234,7 @@ class GetMapSetV2T90(GetMapSetV2):
                 )
                 for subset in subsets
             )
-            _ROOMS[event_bus] = rooms
-            event_bus.notify(
-                RoomsEvent(
-                    map_id,
-                    [Room(room.name, room.id, f"{room.x},{room.y}") for room in rooms],
-                ),
-            )
+            cls._notify_rooms(event_bus, map_id, rooms)
             return HandlingResult.success()
 
         return super()._handle_rooms_subsets(event_bus, data, subsets, map_id)
@@ -211,6 +294,8 @@ class GetMapBootstrap(JsonCommandWithMessageHandling, MessageBodyDataDict):
         if map_capability.info:
             commands.append(map_capability.info.execute(map_id))
         commands.append(GetPosV2(map_id))
+        # 顺带刷新 App 快捷指令（清洁场景），供场景实体/服务使用
+        commands.append(GetQuickCommandT90())
 
         return HandlingResult(
             HandlingState.SUCCESS,
@@ -240,10 +325,81 @@ class T90CleanAreaV2(CleanAreaV2):
         super().__init__(mode, area, cleanings)
 
 
+class T90FreeCleanV2(CleanV2):
+    """下发 9 字段扩展 freeClean 值（带吸力/水量/拖地模式/遍数）。
+
+    与基类的短格式（``cleanings,area...``）不同，此命令的 value 由
+    freeclean.build_value 生成，每房间固定 9 字段，固件按定宽向量解析。
+    """
+
+    def __init__(self, value: str) -> None:
+        super().__init__(CleanAction.START)
+        self._additional_content = {
+            "type": CleanMode.FREE_CLEAN.value,
+            "value": value,
+        }
+
+    def _get_args(self, action: CleanAction) -> dict[str, Any]:
+        args = super()._get_args(action)
+        if action == CleanAction.START:
+            args["content"].update(self._additional_content)
+        return args
+
+
+class GetQuickCommandT90(
+    JsonCommandWithMessageHandling, MessageBodyDataList
+):
+    """发现 App 保存的快捷指令（清洁场景）。
+
+    请求 ``{"type": "1,2"}``；回复为场景列表，每条含
+    ``name/qcid/mid/type/content``，其中 ``content`` 即 9 字段 freeClean
+    值，可原样作为 ``clean_V2`` 的 ``value`` 重放。
+    """
+
+    NAME = "getQuickCommand"
+
+    def __init__(self) -> None:
+        super().__init__({"type": "1,2"})
+
+    @classmethod
+    def _handle_body_data_list(
+        cls, event_bus: EventBus, data: list[Any]
+    ) -> HandlingResult:
+        scenarios = tuple(
+            {
+                "name": str(entry.get("name", f"场景 {entry.get('qcid', i)}")),
+                "qcid": entry.get("qcid"),
+                "mid": entry.get("mid"),
+                "content": str(entry.get("content", "")),
+            }
+            for i, entry in enumerate(data)
+            if isinstance(entry, dict) and entry.get("content")
+        )
+        _SCENARIOS[event_bus] = scenarios
+        event_bus.notify(ScenariosEvent(scenarios))
+        return HandlingResult(HandlingState.SUCCESS, {"scenarios": scenarios})
+
+    @classmethod
+    def _handle_body_data(
+        cls, event_bus: EventBus, data: dict[str, Any] | list[Any]
+    ) -> HandlingResult:
+        # 部分固件把列表包在字典里（如 {"quickCommands": [...]}）
+        if isinstance(data, dict):
+            for value in data.values():
+                if isinstance(value, list):
+                    return cls._handle_body_data_list(event_bus, value)
+            return HandlingResult.analyse()
+        return super()._handle_body_data(event_bus, data)
+
+
 __all__ = [
     "GetMapBootstrap",
     "GetMapSetV2T90",
     "GetPosV2",
+    "GetQuickCommandT90",
+    "ScenariosEvent",
     "T90CleanAreaV2",
+    "T90FreeCleanV2",
     "add_room_metadata_to_svg",
+    "get_scenarios",
 ]

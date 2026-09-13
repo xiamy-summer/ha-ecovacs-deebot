@@ -3,3 +3,21 @@ raw_get_positions:
     entity:
       domain: vacuum
       integration: ecovacs_deebot
+
+get_clean_scenarios:
+  target:
+    entity:
+      domain: vacuum
+      integration: ecovacs_deebot
+
+run_scenario:
+  target:
+    entity:
+      domain: vacuum
+      integration: ecovacs_deebot
+  fields:
+    scenario:
+      required: true
+      example: 睡前清扫
+      selector:
+        text:

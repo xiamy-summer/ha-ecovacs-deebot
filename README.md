@@ -69,12 +69,52 @@ config/
 
 - **vacuum**：吸尘器主体（启动/暂停/回充/区域清扫/扇区清扫）
 - **image.地图**：实时地图（SVG，需机器人在线且保存过地图）
+- **select.清洁场景**：列出科沃斯 App 里保存的快捷指令（清洁场景），选择即重放
 - **传感器**：电量、错误码、本次/累计清扫面积与时长、基站状态、Wi-Fi 信息、各类耗材寿命
 - **按钮**：重新定位、集尘、烘干拖布、清洗基站、各类耗材重置（默认禁用，按需启用）
 - **开关**：断点续扫、童锁、智能探测等
-- **选择/数字**：工作模式、水量、自动集尘频率、清扫次数、音量
+- **选择/数字**：工作模式、水量、当前地图、自动集尘频率、清扫次数、音量
 
 部分实体默认禁用，到 **设备页面 → 实体 → 筛选器** 中按需启用。
+
+## 🧹 进阶功能
+
+### 区域清扫扩展参数（freeClean 9 字段协议）
+
+`vacuum.send_command` 的 `spot_area` 命令在标准 `rooms`/`cleanings` 之外，
+支持以下可选参数（指定任意一个即启用 9 字段扩展 freeClean 格式）：
+
+| 参数 | 取值 | 说明 |
+|------|------|------|
+| `suction` | `quiet` / `normal` / `max` / `max_plus` | 本次清扫吸力，缺省跟随当前风速设置 |
+| `mop_type` | `vacuum` / `mop` / `vacuum_and_mop` / `mop_after_vacuum` | 清扫模式 |
+| `water` | 0-50 整数 | 出水量，缺省按模式自动（吸尘 30 / 拖地 20） |
+| `passes` | ≥1 整数 | 清扫遍数，缺省 1 |
+
+```yaml
+service: vacuum.send_command
+data:
+  entity_id: vacuum.xiao_ke
+  command: spot_area
+  params:
+    rooms: [1, 6, 11]
+    suction: quiet
+    mop_type: mop_after_vacuum
+```
+
+地图卡片中选好房间后，也可以直接在"吸力/模式"下拉框中选择后一键清扫。
+
+### 清洁场景（App 快捷指令重放）
+
+- **select.清洁场景** 实体：自动列出 App 中保存的快捷指令，选择即下发给机器人
+- 服务 `ecovacs_deebot.run_scenario`：按名称或 qcid 重放场景
+- 服务 `ecovacs_deebot.get_clean_scenarios`：手动刷新场景列表（返回 JSON）
+- 场景列表会在每次地图刷新时自动更新
+
+### 定时清扫蓝图
+
+内置蓝图 `科沃斯 T90 - 定时区域清扫`：指定时间+星期几+房间 ID，自动按设定吸力清扫，
+支持指定"扫后拖"执行日。设置 → 自动化与场景 → 蓝图 → 导入蓝图。
 
 ## ❓ 常见问题
 
@@ -152,6 +192,7 @@ Unofficial Home Assistant integration for Ecovacs DEEBOT robots, focused on **ne
 - [DeebotUniverse/client.py](https://github.com/DeebotUniverse/client.py) — 核心协议库
 - [Home Assistant Core](https://github.com/home-assistant/core) — 官方 ecovacs 集成模板
 - [lifujie25/ha-ecovacs-t90-pro](https://github.com/lifujie25/ha-ecovacs-t90-pro) — v0.2.0 的中国区 T90 地图协议兼容实现（`t90_map.py`、地图卡片）移植自该项目
+- [Osezno-byte/ecovacs-omni-ha](https://github.com/Osezno-byte/ecovacs-omni-ha) — freeClean 9 字段扩展协议编码器（`freeclean.py`）、`getQuickCommand` 场景发现/重放、zstd subsets 解析与定时清扫蓝图移植自该项目（MIT）
 - [HACS](https://hacs.xyz/)
 
 ## 📄 许可证

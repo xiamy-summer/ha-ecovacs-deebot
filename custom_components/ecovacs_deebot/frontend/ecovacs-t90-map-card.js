@@ -279,6 +279,19 @@ class EcovacsT90MapCard extends HTMLElement {
           color: var(--error-color, #f44336);
           border-color: color-mix(in srgb, var(--error-color, #f44336) 40%, transparent);
         }
+        .params {
+          display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+          padding: 4px 14px 10px; border-top: 1px dashed var(--divider-color);
+        }
+        .params:first-of-type { border-top: 0; }
+        .params .selection-label { margin-right: 0; }
+        .params select {
+          height: 30px; padding: 0 8px; border: 1.5px solid var(--divider-color);
+          border-radius: 15px; background: var(--card-background-color, #fff);
+          color: var(--primary-text-color); font-size: 13px; cursor: pointer;
+          outline: none; transition: border-color .15s;
+        }
+        .params select:hover, .params select:focus { border-color: var(--primary-color); }
         dialog.map-dialog {
           width: min(96vw, 1440px); height: 92vh; max-width: none; max-height: none;
           margin: auto; padding: 0; border: 0; border-radius: 16px;
@@ -330,6 +343,24 @@ class EcovacsT90MapCard extends HTMLElement {
         </div>
         <div class="viewport"><div class="map"><div class="loading">正在加载地图</div></div></div>
         <div class="selection"><span class="selection-label">未选择区域</span></div>
+        <div class="params">
+          <span class="selection-label">吸力</span>
+          <select class="param-suction" aria-label="清扫吸力">
+            <option value="">跟随设置</option>
+            <option value="quiet">安静</option>
+            <option value="normal">标准</option>
+            <option value="max">强力</option>
+            <option value="max_plus">强力+</option>
+          </select>
+          <span class="selection-label">模式</span>
+          <select class="param-mop" aria-label="清扫模式">
+            <option value="">跟随设置</option>
+            <option value="vacuum">纯扫</option>
+            <option value="mop">纯拖</option>
+            <option value="vacuum_and_mop">扫拖同启</option>
+            <option value="mop_after_vacuum">扫后拖</option>
+          </select>
+        </div>
         <div class="controls">
           <button class="zoom-out" title="缩小" aria-label="缩小"><ha-icon icon="mdi:magnify-minus-outline"></ha-icon></button>
           <button class="zoom-in" title="放大" aria-label="放大"><ha-icon icon="mdi:magnify-plus-outline"></ha-icon></button>
@@ -564,16 +595,29 @@ class EcovacsT90MapCard extends HTMLElement {
     const buttonText = this._cleanButton.querySelector("span");
     if (buttonText) buttonText.textContent = "正在发送";
     this._setCommandStatus("正在发送区域清扫命令…");
+    const params = {
+      rooms: [...this._selectedRooms.keys()],
+      cleanings: 1,
+    };
+    const suction = this.shadowRoot.querySelector(".param-suction")?.value;
+    const mopType = this.shadowRoot.querySelector(".param-mop")?.value;
+    if (suction) params.suction = suction;
+    if (mopType) params.mop_type = mopType;
+    const paramNames = [
+      suction && `吸力=${this.shadowRoot.querySelector(`.param-suction option[value="${suction}"]`)?.textContent || suction}`,
+      mopType && `模式=${this.shadowRoot.querySelector(`.param-mop option[value="${mopType}"]`)?.textContent || mopType}`,
+    ].filter(Boolean).join("，");
     try {
       await this._hass.callService("vacuum", "send_command", {
         entity_id: this._config.vacuum_entity,
         command: "spot_area",
-        params: {
-          rooms: [...this._selectedRooms.keys()],
-          cleanings: 1,
-        },
+        params,
       });
-      this._setCommandStatus(`已发送清扫命令：${names}`, false, true);
+      this._setCommandStatus(
+        `已发送清扫命令：${names}${paramNames ? `（${paramNames}）` : ""}`,
+        false,
+        true,
+      );
       this._selectedRooms.clear();
     } catch (error) {
       const message = error?.message || String(error);
