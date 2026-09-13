@@ -162,61 +162,126 @@ class EcovacsT90MapCard extends HTMLElement {
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; }
-        ha-card { overflow: hidden; border-radius: var(--ha-card-border-radius, 8px); }
-        .header { display: flex; align-items: center; gap: 10px; padding: 10px 12px 8px 16px; }
-        .title { min-width: 0; flex: 1; font-size: 18px; font-weight: 600; }
-        .state { color: var(--secondary-text-color); font-size: 13px; white-space: nowrap; }
-        .viewport {
-          height: min(66vh, 680px); min-height: 340px; overflow: auto;
-          background: var(--secondary-background-color); overscroll-behavior: contain;
+        ha-card {
+          overflow: hidden;
+          border-radius: var(--ha-card-border-radius, 16px);
+          border: none;
+          box-shadow: var(--ha-card-box-shadow, 0 2px 12px rgb(0 0 0 / .1));
         }
-        .map { display: flex; min-width: 100%; min-height: 100%; align-items: flex-start; justify-content: center; }
-        .map svg { display: block; flex: 0 0 auto; height: auto; max-width: none; touch-action: pan-x pan-y; }
+        .header { display: flex; align-items: center; gap: 12px; padding: 13px 12px 11px 16px; }
+        .avatar {
+          width: 38px; height: 38px; border-radius: 12px; flex: 0 0 auto;
+          display: flex; align-items: center; justify-content: center; color: #fff;
+          background: linear-gradient(135deg,
+            var(--primary-color, #03a9f4),
+            color-mix(in srgb, var(--primary-color, #03a9f4) 55%, #7c4dff));
+          box-shadow: 0 2px 8px rgb(0 0 0 / .18);
+        }
+        .title { min-width: 0; flex: 1; font-size: 17px; font-weight: 700; letter-spacing: .2px; }
+        .state-pill {
+          --tone: var(--secondary-text-color);
+          display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;
+          height: 26px; padding: 0 11px; border-radius: 13px;
+          color: var(--tone); font-size: 12.5px; font-weight: 600; white-space: nowrap;
+          background: color-mix(in srgb, var(--tone) 14%, transparent);
+          transition: background .25s, color .25s;
+        }
+        .state-pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--tone); }
+        .state-pill.cleaning { --tone: var(--primary-color); background: color-mix(in srgb, var(--tone) 22%, transparent); }
+        .state-pill.cleaning .dot { animation: t90-pulse 1.4s ease-in-out infinite; }
+        .state-pill.docked { --tone: #4caf50; }
+        .state-pill.returning { --tone: #03a9f4; }
+        .state-pill.paused { --tone: #ff9800; }
+        .state-pill.idle { --tone: #9e9e9e; }
+        .state-pill.error { --tone: var(--error-color, #f44336); }
+        @keyframes t90-pulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: .35; transform: scale(.7); }
+        }
+        .viewport {
+          height: min(62vh, 640px); min-height: 300px; overflow: auto;
+          background: radial-gradient(circle at 50% 0%,
+            color-mix(in srgb, var(--primary-color, #03a9f4) 7%, transparent), transparent 65%),
+            var(--secondary-background-color);
+          overscroll-behavior: contain;
+          transition: height .3s ease;
+        }
+        .map {
+          display: flex; min-width: 100%; min-height: 100%; align-items: center;
+          justify-content: center; padding: 12px; box-sizing: border-box;
+        }
+        .map svg {
+          display: block; flex: 0 0 auto; height: auto; max-width: none;
+          touch-action: pan-x pan-y; border-radius: 10px;
+          box-shadow: 0 2px 14px rgb(0 0 0 / .12);
+        }
         .loading, .error { margin: auto; padding: 32px; color: var(--secondary-text-color); }
+        .loading { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+        .loading::before {
+          content: ""; width: 18px; height: 18px; border-radius: 50%;
+          border: 2.5px solid var(--divider-color); border-top-color: var(--primary-color);
+          animation: t90-spin 1s linear infinite;
+        }
+        @keyframes t90-spin { to { transform: rotate(360deg); } }
         .error { color: var(--error-color); }
         .controls {
           display: grid; grid-template-columns: auto auto minmax(120px, 1fr) auto auto auto;
-          align-items: center; gap: 6px; padding: 10px 12px;
+          align-items: center; gap: 7px; padding: 10px 12px;
           border-top: 1px solid var(--divider-color);
         }
         .command-status {
-          min-height: 18px; padding: 0 14px 8px; color: var(--secondary-text-color);
-          font-size: 13px;
+          min-height: 18px; padding: 0 16px 9px; color: var(--secondary-text-color);
+          font-size: 13px; text-align: center;
         }
         .command-status:empty { display: none; }
         .command-status.error { color: var(--error-color); }
         .command-status.success { color: var(--success-color, #2e7d32); }
         button {
-          height: 40px; min-width: 40px; border: 0; border-radius: 6px;
-          color: var(--primary-text-color); background: transparent; cursor: pointer;
-          display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+          height: 38px; min-width: 38px; border: 0; border-radius: 50%;
+          color: var(--primary-text-color); background: var(--secondary-background-color);
+          cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+          gap: 7px; transition: background .15s, transform .1s, box-shadow .15s, opacity .15s;
         }
-        button:hover { background: var(--secondary-background-color); }
-        button:disabled { opacity: .45; cursor: default; }
-        button.primary {
-          padding: 0 14px; color: var(--text-primary-color, #fff);
-          background: var(--primary-color); font-weight: 600;
+        button:hover { background: color-mix(in srgb, var(--primary-color) 12%, var(--secondary-background-color)); }
+        button:active { transform: scale(.93); }
+        button:disabled { opacity: .4; cursor: default; transform: none; }
+        button.primary, button.stop {
+          height: 38px; padding: 0 16px; border-radius: 19px;
+          color: var(--text-primary-color, #fff); font-weight: 600; letter-spacing: .3px;
+          box-shadow: 0 2px 8px rgb(0 0 0 / .22);
         }
-        button.primary:hover { filter: brightness(.95); }
-        button.stop {
-          padding: 0 14px; color: var(--text-primary-color, #fff);
-          background: var(--error-color, #db4437); font-weight: 600;
-        }
-        button.stop:hover { filter: brightness(.95); }
+        button.primary { background: var(--primary-color); }
+        button.stop { background: var(--error-color, #db4437); }
+        button.primary:hover { background: var(--primary-color); filter: brightness(1.06); }
+        button.stop:hover { background: var(--error-color, #db4437); filter: brightness(1.06); }
         input[type="range"] { width: 100%; accent-color: var(--primary-color); }
         .selection {
-          min-height: 42px; padding: 8px 14px; display: flex; align-items: center;
+          min-height: 44px; padding: 8px 14px; display: flex; align-items: center;
           gap: 7px; flex-wrap: wrap; border-top: 1px solid var(--divider-color);
         }
-        .selection-label { color: var(--secondary-text-color); font-size: 13px; }
+        .selection-label { color: var(--secondary-text-color); font-size: 13px; margin-right: 2px; }
         .chip {
-          min-width: auto; height: 30px; padding: 4px 9px; border: 1px solid var(--divider-color);
-          border-radius: 5px; background: var(--secondary-background-color); font-size: 13px;
+          height: 32px; min-width: auto; padding: 4px 14px; border-radius: 16px;
+          border: 1.5px solid var(--divider-color);
+          background: var(--card-background-color, #fff); font-size: 13px; font-weight: 500;
+          display: inline-flex; align-items: center; gap: 4px; cursor: pointer;
+          transition: border-color .15s, background .15s, color .15s, box-shadow .15s, transform .1s;
         }
-        .chip.selected { color: var(--primary-color); border-color: var(--primary-color); background: color-mix(in srgb, var(--primary-color) 12%, transparent); }
+        .chip ha-icon { --mdc-icon-size: 14px; }
+        .chip:hover { border-color: var(--primary-color); color: var(--primary-color); }
+        .chip:active { transform: scale(.95); }
+        .chip.selected {
+          color: var(--text-primary-color, #fff); border-color: transparent;
+          background: var(--primary-color); font-weight: 600;
+          box-shadow: 0 2px 8px color-mix(in srgb, var(--primary-color) 40%, transparent);
+        }
+        .chip.clear {
+          color: var(--error-color, #f44336);
+          border-color: color-mix(in srgb, var(--error-color, #f44336) 40%, transparent);
+        }
         dialog.map-dialog {
           width: min(96vw, 1440px); height: 92vh; max-width: none; max-height: none;
-          margin: auto; padding: 0; border: 0; border-radius: 12px;
+          margin: auto; padding: 0; border: 0; border-radius: 16px;
           color: var(--primary-text-color); background: var(--card-background-color, #fff);
           box-shadow: 0 8px 40px rgb(0 0 0 / .35); overflow: hidden;
         }
@@ -226,34 +291,41 @@ class EcovacsT90MapCard extends HTMLElement {
           display: flex; align-items: center; gap: 10px; flex: 0 0 auto;
           padding: 8px 10px 8px 16px; border-bottom: 1px solid var(--divider-color);
         }
-        .dialog-title { min-width: 0; flex: 1; font-size: 18px; font-weight: 600; }
+        .dialog-title { min-width: 0; flex: 1; font-size: 17px; font-weight: 700; }
         .dialog-scale { min-width: 46px; color: var(--secondary-text-color); text-align: right; font-size: 13px; }
         .dialog-viewport {
           min-height: 0; flex: 1 1 auto; overflow: auto; overscroll-behavior: contain;
           background: var(--secondary-background-color);
         }
         .dialog-map {
-          display: flex; min-width: 100%; min-height: 100%; align-items: flex-start;
-          justify-content: center;
+          display: flex; min-width: 100%; min-height: 100%; align-items: center;
+          justify-content: center; padding: 12px; box-sizing: border-box;
         }
-        .dialog-map svg { display: block; flex: 0 0 auto; height: auto; max-width: none; touch-action: pan-x pan-y; }
+        .dialog-map svg {
+          display: block; flex: 0 0 auto; height: auto; max-width: none;
+          touch-action: pan-x pan-y; border-radius: 10px;
+          box-shadow: 0 2px 14px rgb(0 0 0 / .12);
+        }
         .dialog-controls {
           display: grid; grid-template-columns: auto auto auto minmax(120px, 1fr);
-          align-items: center; gap: 6px; flex: 0 0 auto; padding: 9px 12px;
+          align-items: center; gap: 7px; flex: 0 0 auto; padding: 9px 12px;
           border-top: 1px solid var(--divider-color);
         }
         @media (max-width: 600px) {
+          .header { padding: 11px 10px 9px 14px; }
+          .avatar { width: 34px; height: 34px; border-radius: 10px; }
           .viewport { height: 54vh; min-height: 300px; }
           .controls { grid-template-columns: auto auto minmax(80px, 1fr) auto; }
-          button.primary, button.stop { grid-column: 1 / -1; width: 100%; }
+          button.primary, button.stop { grid-column: 1 / -1; width: 100%; border-radius: 12px; }
           dialog.map-dialog { width: 100vw; height: 100dvh; border-radius: 0; }
           .dialog-controls { grid-template-columns: auto auto auto minmax(80px, 1fr); }
         }
       </style>
       <ha-card>
         <div class="header">
+          <div class="avatar"><ha-icon icon="mdi:robot-vacuum"></ha-icon></div>
           <div class="title"></div>
-          <div class="state"></div>
+          <div class="state-pill"><span class="dot"></span><span class="state-text"></span></div>
           <button class="expand" title="弹窗查看地图" aria-label="弹窗查看地图"><ha-icon icon="mdi:arrow-expand-all"></ha-icon></button>
         </div>
         <div class="viewport"><div class="map"><div class="loading">正在加载地图</div></div></div>
@@ -383,7 +455,17 @@ class EcovacsT90MapCard extends HTMLElement {
 
   _applyZoom() {
     const svg = this._mapElement?.querySelector("svg");
-    if (svg) svg.style.width = `${this._zoom * 100}%`;
+    if (!svg) return;
+    svg.style.width = `${this._zoom * 100}%`;
+    const viewport = this.shadowRoot.querySelector(".viewport");
+    const view = svg.viewBox?.baseVal;
+    if (viewport && view?.width && view?.height && this._zoom === 1) {
+      const padding = 24;
+      const fit =
+        Math.round(((viewport.clientWidth - padding) * view.height) / view.width) + padding;
+      const max = Math.max(300, Math.round(window.innerHeight * 0.62));
+      viewport.style.height = `${Math.min(Math.max(fit, 300), max)}px`;
+    }
   }
 
   _openMapDialog() {
@@ -456,6 +538,18 @@ class EcovacsT90MapCard extends HTMLElement {
       chip.textContent = name;
       chip.addEventListener("click", () => this._toggleRoom(id, name));
       this._selectionElement.append(chip);
+    }
+    if (this._selectedRooms.size) {
+      const clear = document.createElement("button");
+      clear.className = "chip clear";
+      const icon = document.createElement("ha-icon");
+      icon.icon = "mdi:close";
+      clear.append(icon, "清除");
+      clear.addEventListener("click", () => {
+        this._selectedRooms.clear();
+        this._applySelection();
+      });
+      this._selectionElement.append(clear);
     }
     this._cleanButton.disabled =
       this._cleaning || this._stopping || this._selectedRooms.size === 0;
@@ -535,8 +629,20 @@ class EcovacsT90MapCard extends HTMLElement {
       unavailable: "不可用",
       unknown: "状态未知",
     };
-    const element = this.shadowRoot.querySelector(".state");
-    if (element) element.textContent = stateNames[state] || state;
+    const toneMap = {
+      cleaning: "cleaning",
+      docked: "docked",
+      returning: "returning",
+      paused: "paused",
+      idle: "idle",
+      unavailable: "error",
+    };
+    const element = this.shadowRoot.querySelector(".state-pill");
+    if (element) {
+      element.className = `state-pill ${toneMap[state] || "idle"}`;
+      const text = element.querySelector(".state-text");
+      if (text) text.textContent = stateNames[state] || state;
+    }
     if (this._stopButton) {
       this._stopButton.disabled = this._stopping || this._cleaning;
     }
