@@ -334,14 +334,16 @@ class EcovacsVacuum(
                 translation_placeholders={"scenario": scenario},
             )
 
+        # 场景内容来自固件自身（国行格式可能是字段数变体），校验失败时原样下发
         try:
             value = assert_valid_value(entry["content"])
         except FreeCleanError as error:
-            raise ServiceValidationError(
-                translation_domain=DOMAIN,
-                translation_key="vacuum_freeclean_invalid",
-                translation_placeholders={"error": str(error)},
-            ) from error
+            _LOGGER.info(
+                "Scenario %r content not 9-field standard, sending as-is: %s",
+                scenario,
+                error,
+            )
+            value = entry["content"]
 
         await self._device.execute_command(T90FreeCleanV2(value))
 

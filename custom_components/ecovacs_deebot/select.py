@@ -225,6 +225,8 @@ class EcovacsScenarioSelectEntity(EcovacsEntity[None], SelectEntity):
 
     _always_available = True
 
+    _PLACEHOLDER = "点击选择场景…"
+
     entity_description = SelectEntityDescription(
         key="clean_scenario",
         translation_key="clean_scenario",
@@ -237,9 +239,12 @@ class EcovacsScenarioSelectEntity(EcovacsEntity[None], SelectEntity):
         super().__init__(device, None, **kwargs)
         self._scenarios: tuple[dict[str, Any], ...] = get_scenarios(device.events)
         self._sync_options()
+        # 常驻占位选项，避免实体状态显示 unknown
+        self._attr_current_option = self._PLACEHOLDER
 
     def _sync_options(self) -> None:
-        self._attr_options = [str(item["name"]) for item in self._scenarios]
+        names = [str(item["name"]) for item in self._scenarios]
+        self._attr_options = [self._PLACEHOLDER, *names]
 
     @override
     async def async_added_to_hass(self) -> None:
@@ -249,11 +254,8 @@ class EcovacsScenarioSelectEntity(EcovacsEntity[None], SelectEntity):
         async def on_scenarios(event: ScenariosEvent) -> None:
             self._scenarios = event.scenarios
             self._sync_options()
-            if (
-                self._attr_current_option is not None
-                and self._attr_current_option not in self._attr_options
-            ):
-                self._attr_current_option = None
+            if self._attr_current_option not in self._attr_options:
+                self._attr_current_option = self._PLACEHOLDER
             self.async_write_ha_state()
 
         self._subscribe(ScenariosEvent, on_scenarios)
@@ -261,19 +263,27 @@ class EcovacsScenarioSelectEntity(EcovacsEntity[None], SelectEntity):
     @override
     async def async_select_option(self, option: str) -> None:
         """Replay the selected scenario on the device."""
+        if option == self._PLACEHOLDER:
+            return
         entry = next(
             (item for item in self._scenarios if str(item["name"]) == option),
             None,
         )
+        # 场景重放不是持久状态，执行后回到占位项
+        self._attr_current_option = self._PLACEHOLDER
+        self.async_write_ha_state()
         if entry is None:
             _LOGGER.warning("Scenario %s not found, skipping", option)
             return
+        # 场景内容来自固件自身（国行格式可能是 7/10/20 字段等变体，
+        # 未必符合 9 字段规范），校验失败时原样下发即可
         try:
             value = assert_valid_value(entry["content"])
         except FreeCleanError as error:
-            _LOGGER.warning("Scenario %s has invalid content: %s", option, error)
-            return
+            _LOGGER.info(
+                "Scenario %s content not 9-field standard, sending as-is: %s",
+                option,
+                error,
+            )
+            value = entry["content"]
         await self._device.execute_command(T90FreeCleanV2(value))
-        # 场景重放不是持久状态，选择后回到未选择
-        self._attr_current_option = None
-        self.async_write_ha_state()
