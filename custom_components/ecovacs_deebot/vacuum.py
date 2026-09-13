@@ -256,7 +256,13 @@ class EcovacsVacuum(
                         room_specs.append(item)
                     else:
                         room_specs.append({"id": item})
-                if per_room or suction or water is not None or mop_type:
+                if (
+                    per_room
+                    or suction
+                    or water is not None
+                    or mop_type
+                    or (passes or 1) != 1
+                ):
                     default_suction = suction or self._attr_fan_speed or "quiet"
                     default_mop = mop_type or "vacuum"
                     try:

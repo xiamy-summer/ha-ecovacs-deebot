@@ -37,6 +37,10 @@ class T90ModernMapCardEditor extends HTMLElement {
         .order-section {
           border: 1px solid var(--divider-color); border-radius: 8px; padding: 12px;
         }
+        .toggles { display: grid; gap: 10px; }
+        .toggles label {
+          display: flex; align-items: center; gap: 10px; font-size: 14px; cursor: pointer;
+        }
         .order-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
         .order-title { font-weight: 600; font-size: 14px; }
         .order-load {
@@ -45,13 +49,18 @@ class T90ModernMapCardEditor extends HTMLElement {
         }
         .order-list { display: grid; gap: 6px; }
         .order-row {
-          display: flex; align-items: center; gap: 6px;
+          display: flex; align-items: center; gap: 6px; touch-action: none; cursor: grab;
           padding: 6px 8px; border-radius: 6px; background: var(--secondary-background-color, #f5f5f5);
+          border: 1px solid transparent;
         }
-        .order-name { flex: 1; font-size: 13px; }
+        .order-row.dragging {
+          opacity: .5; cursor: grabbing;
+          border: 1px dashed var(--primary-color);
+        }
         .order-row button {
           width: 28px; height: 26px; border: 1px solid var(--divider-color); border-radius: 6px;
           background: var(--card-background-color, #fff); cursor: pointer; font-size: 13px;
+          touch-action: auto;
         }
         .order-row button:disabled { opacity: .35; cursor: default; }
         .order-empty { color: var(--secondary-text-color); font-size: 13px; }
@@ -64,16 +73,24 @@ class T90ModernMapCardEditor extends HTMLElement {
           label="刷新间隔（秒）"></ha-textfield>
         <ha-entity-picker class="status-entity" label="附加状态实体（可选，如基站/烘干传感器）"
           clearable></ha-entity-picker>
+        <div class="order-head" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <span style="font-weight:600;font-size:14px">显示开关</span>
+        </div>
+        <div class="toggles">
+          <label><ha-switch class="t-rooms"></ha-switch>区域选择行</label>
+          <label><ha-switch class="t-params"></ha-switch>清扫参数（吸力/模式/水量/次数）</label>
+          <label><ha-switch class="t-dock"></ha-switch>返回基站按钮</label>
+          <label><ha-switch class="t-locate"></ha-switch>定位按钮</label>
+        </div>
+        <div class="order-head">
+          <span class="order-title">区域排序</span>
+          <button class="order-load">重新载入列表</button>
+        </div>
         <div class="order-section">
-          <div class="order-head">
-            <span class="order-title">区域排序</span>
-            <button class="order-load">载入区域列表</button>
-          </div>
           <div class="order-list"></div>
           <div class="order-empty" style="display:none"></div>
           <div class="hint" style="margin-top:8px">
-            点击「载入区域列表」从地图读取房间，然后用 ↑↓ 调整顺序。
-            排序保存在仪表盘配置中，所有设备（PC/APP）一致。
+            拖动房间可调整顺序（也可用 ↑↓）。排序保存在仪表盘配置中，PC/APP 同步生效。
           </div>
         </div>
         <div class="hint">
@@ -129,13 +146,36 @@ class T90ModernMapCardEditor extends HTMLElement {
 
     this._roomsForOrder = null;
     this.shadowRoot.querySelector(".order-load").addEventListener("click", () => {
+      this._roomsForOrder = null; // 强制重新拉取
       this._loadRoomsForOrder();
     });
+    // 显示开关
+    const toggleMap = [
+      [".t-rooms", "show_rooms", true],
+      [".t-params", "show_params", true],
+      [".t-dock", "show_dock", true],
+      [".t-locate", "show_locate", true],
+    ];
+    for (const [selector, key, defaultValue] of toggleMap) {
+      const sw = this.shadowRoot.querySelector(selector);
+      sw.checked = this._config[key] !== false ? true : false;
+      if (this._config[key] === undefined) sw.checked = defaultValue;
+      sw.addEventListener("change", () => {
+        this._updateConfig(key, sw.checked);
+      });
+    }
+    // 房间列表已缓存时直接渲染，无需重新载入
+    if (this._roomsForOrder) {
+      this._renderOrderList();
+    } else if (this._config.image_entity) {
+      this._loadRoomsForOrder();
+    }
   }
 
   async _loadRoomsForOrder() {
     const empty = this.shadowRoot.querySelector(".order-empty");
     const list = this.shadowRoot.querySelector(".order-list");
+    if (!empty || !list) return;
     const entity = this._hass?.states[this._config.image_entity];
     const picture = entity?.attributes?.entity_picture;
     if (!picture) {
@@ -189,8 +229,10 @@ class T90ModernMapCardEditor extends HTMLElement {
       const room = known.find((item) => item.id === id);
       const row = document.createElement("div");
       row.className = "order-row";
+      row.dataset.roomId = String(id);
       const name = document.createElement("span");
       name.className = "order-name";
+      name.style.cssText = "flex:1;font-size:13px";
       name.textContent = room?.name || `区域 ${id}`;
       const up = document.createElement("button");
       up.textContent = "↑";
@@ -209,6 +251,34 @@ class T90ModernMapCardEditor extends HTMLElement {
         this._renderOrderList();
       });
       row.append(name, up, down);
+      // 拖拽排序（触屏/鼠标通用；按钮区域不触发）
+      row.addEventListener("pointerdown", (event) => {
+        if (event.target.closest("button") || event.button !== 0) return;
+        event.preventDefault();
+        row.setPointerCapture(event.pointerId);
+        row.classList.add("dragging");
+        const onMove = (moveEvent) => {
+          const el = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY);
+          const target = el?.closest?.(".order-row");
+          if (!target || target === row || target.parentElement !== list) return;
+          const rect = target.getBoundingClientRect();
+          const insertBefore = moveEvent.clientY < rect.top + rect.height / 2;
+          list.insertBefore(row, insertBefore ? target : target.nextSibling);
+        };
+        const onUp = () => {
+          row.classList.remove("dragging");
+          row.removeEventListener("pointermove", onMove);
+          row.removeEventListener("pointerup", onUp);
+          row.removeEventListener("pointercancel", onUp);
+          const newOrder = [...list.querySelectorAll(".order-row")]
+            .map((el) => Number(el.dataset.roomId));
+          this._updateConfig("room_order", newOrder);
+          this._renderOrderList();
+        };
+        row.addEventListener("pointermove", onMove);
+        row.addEventListener("pointerup", onUp);
+        row.addEventListener("pointercancel", onUp);
+      });
       list.append(row);
     });
   }
@@ -236,13 +306,11 @@ const ICONS = {
   refresh: `<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/></svg>`,
   play: `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg>`,
   stop: `<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><rect x="6.5" y="6.5" width="11" height="11" rx="2"/></svg>`,
+  dock: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11.5 12 4l8 7.5"/><path d="M6.5 10v9h11v-9"/><rect x="9.6" y="13.6" width="4.8" height="3" rx="0.8"/></svg>`,
+  locate: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v3M12 18.2v3M2.8 12h3M18.2 12h3"/><circle cx="12" cy="12" r="7.2"/></svg>`,
   check: `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.5l5 5 10-11"/></svg>`,
   swap: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4v13m0 0l-3.5-3.5M7 17l3.5-3.5M17 20V7m0 0l-3.5 3.5M17 7l3.5 3.5"/></svg>`,
 };
-
-// 每房间参数的短名称（用于地图徽章与状态提示）
-const SUCTION_SHORT = { quiet: "静音", normal: "标准", max: "强力", max_plus: "强力+" };
-const MODE_BADGE = { vacuum: "扫", mop: "拖", vacuum_and_mop: "扫拖", mop_after_vacuum: "扫后拖" };
 
 class T90ModernMapCard extends HTMLElement {
   constructor() {
@@ -260,7 +328,6 @@ class T90ModernMapCard extends HTMLElement {
     this._lastRefresh = 0;
     this._timer = null;
     this._roomOrder = [];
-    this._roomSettings = new Map();
     this._resizeObserver = null;
     this._dragId = null;
   }
@@ -272,10 +339,13 @@ class T90ModernMapCard extends HTMLElement {
     this._config = {
       title: "T90 地图",
       refresh_interval: 10,
+      show_rooms: true,
+      show_params: true,
+      show_dock: true,
+      show_locate: true,
       ...config,
     };
     this._roomOrder = this._loadRoomOrder();
-    this._roomSettings = this._loadRoomSettings();
     this._render();
   }
 
@@ -470,43 +540,6 @@ class T90ModernMapCard extends HTMLElement {
         }
         .param select:hover, .param select:focus { border-color: var(--primary-color); }
 
-        /* ---------- 每房间参数 ---------- */
-        .room-params {
-          display: none; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-          gap: 6px; padding: 6px 16px 2px;
-        }
-        .room-params.has-rooms { display: grid; }
-        .room-param-row {
-          display: flex; align-items: center; gap: 6px;
-          padding: 5px 8px; border: 1px solid var(--divider-color); border-radius: 10px;
-          background: color-mix(in srgb, var(--secondary-background-color, #f5f5f5) 60%, transparent);
-        }
-        .room-param-name {
-          flex: 1; min-width: 0; font-size: 12.5px; font-weight: 600;
-          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-        }
-        .room-param-row select {
-          max-width: 86px; height: 26px; padding: 0 22px 0 8px;
-          border: 1px solid var(--divider-color); border-radius: 13px;
-          background-color: transparent; color: var(--primary-text-color);
-          font-size: 12px; cursor: pointer; outline: none; appearance: none;
-          background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E");
-          background-repeat: no-repeat; background-position: right 7px center;
-          background-size: 10px 6px;
-        }
-        .room-param-row select.set {
-          border-color: var(--primary-color);
-          color: var(--primary-color); font-weight: 600;
-        }
-        .room-param-row select:hover { border-color: var(--primary-color); }
-        .room-param-clear {
-          width: 22px; height: 22px; flex: 0 0 auto; padding: 0;
-          border: 0; border-radius: 50%; cursor: pointer;
-          display: inline-flex; align-items: center; justify-content: center;
-          color: var(--secondary-text-color); background: transparent;
-        }
-        .room-param-clear:hover { color: var(--error-color, #f44336); background: color-mix(in srgb, var(--error-color, #f44336) 10%, transparent); }
-
         /* ---------- 底部操作栏 ---------- */
         .actionbar {
           display: flex; align-items: center; gap: 10px;
@@ -605,8 +638,8 @@ class T90ModernMapCard extends HTMLElement {
         <div class="rooms"><button class="tool-btn sort-toggle" title="排序模式" aria-label="排序模式">${ICONS.swap}</button><span class="rooms-label">未选择区域</span></div>
         <div class="params">
           <span class="param">
-            <span class="param-label">默认吸力</span>
-            <select class="param-suction" aria-label="默认清扫吸力">
+            <span class="param-label">吸力</span>
+            <select class="param-suction" aria-label="清扫吸力">
               <option value="">跟随设置</option>
               <option value="quiet">安静</option>
               <option value="normal">标准</option>
@@ -615,8 +648,8 @@ class T90ModernMapCard extends HTMLElement {
             </select>
           </span>
           <span class="param">
-            <span class="param-label">默认模式</span>
-            <select class="param-mop" aria-label="默认清扫模式">
+            <span class="param-label">模式</span>
+            <select class="param-mop" aria-label="清扫模式">
               <option value="">跟随设置</option>
               <option value="vacuum">纯扫</option>
               <option value="mop">纯拖</option>
@@ -624,17 +657,35 @@ class T90ModernMapCard extends HTMLElement {
               <option value="mop_after_vacuum">扫后拖</option>
             </select>
           </span>
+          <span class="param">
+            <span class="param-label">水量</span>
+            <select class="param-water" aria-label="出水量">
+              <option value="">跟随设置</option>
+              <option value="20">低</option>
+              <option value="25">中</option>
+              <option value="30">高</option>
+            </select>
+          </span>
+          <span class="param">
+            <span class="param-label">次数</span>
+            <select class="param-passes" aria-label="清扫次数">
+              <option value="1">1 次</option>
+              <option value="2">2 次</option>
+              <option value="3">3 次</option>
+            </select>
+          </span>
         </div>
-        <div class="room-params"></div>
         <div class="actionbar">
           <span class="tool-group">
             <button class="tool-btn zoom-out" title="缩小" aria-label="缩小">${ICONS.zoomOut}</button>
             <button class="tool-btn zoom-in" title="放大" aria-label="放大">${ICONS.zoomIn}</button>
             <button class="tool-btn refresh" title="刷新地图和位置" aria-label="刷新地图和位置">${ICONS.refresh}</button>
+            <button class="tool-btn locate" title="定位扫地机" aria-label="定位扫地机">${ICONS.locate}</button>
+            <button class="tool-btn dock" title="返回基站" aria-label="返回基站">${ICONS.dock}</button>
           </span>
           <span class="spacer"></span>
           <button class="action-btn stop" disabled>${ICONS.stop}<span>停止</span></button>
-          <button class="action-btn clean" disabled>${ICONS.play}<span>清扫所选区域</span></button>
+          <button class="action-btn clean" disabled>${ICONS.play}<span>清扫全屋</span></button>
         </div>
         <div class="command-status" aria-live="polite"></div>
       </ha-card>
@@ -665,7 +716,6 @@ class T90ModernMapCard extends HTMLElement {
     this._dialogMapElement = this.shadowRoot.querySelector(".dialog-map");
     this._extraStatusElement = this.shadowRoot.querySelector(".extra-status");
     this._roomsElement = this.shadowRoot.querySelector(".rooms");
-    this._roomParamsElement = this.shadowRoot.querySelector(".room-params");
     this._sorting = false;
     this.shadowRoot.querySelector(".sort-toggle").addEventListener("click", () => {
       this._sorting = !this._sorting;
@@ -702,6 +752,21 @@ class T90ModernMapCard extends HTMLElement {
     }, { passive: false });
     this._cleanButton.addEventListener("click", () => this._cleanSelectedRooms());
     this._stopButton.addEventListener("click", () => this._stopCleaning());
+    this.shadowRoot.querySelector(".dock").addEventListener("click", () =>
+      this._vacuumAction("return_to_base", "正在发送返回基站命令…", "已发送返回基站命令"));
+    this.shadowRoot.querySelector(".locate").addEventListener("click", () =>
+      this._vacuumAction("locate", "正在定位扫地机…", "已发送定位命令"));
+    // 按配置控制各区块显示
+    const visibility = [
+      [".rooms", this._config.show_rooms !== false],
+      [".params", this._config.show_params !== false],
+      [".dock", this._config.show_dock !== false],
+      [".locate", this._config.show_locate !== false],
+    ];
+    for (const [selector, visible] of visibility) {
+      const el = this.shadowRoot.querySelector(selector);
+      if (el) el.style.display = visible ? "" : "none";
+    }
     this._startTimer();
   }
 
@@ -755,7 +820,6 @@ class T90ModernMapCard extends HTMLElement {
         requestAnimationFrame(() => this._applyZoom());
       });
       this._applySelection();
-      this._applyRoomBadges();
       if (this._dialog?.open) this._syncDialogMap();
     } catch (error) {
       this._showError(`地图加载失败: ${error.message}`);
@@ -830,7 +894,6 @@ class T90ModernMapCard extends HTMLElement {
     this._bindRoomEvents(this._dialogMapElement, false);
     this._applyDialogZoom();
     this._applySelection();
-    this._applyRoomBadges();
   }
 
   _setDialogZoom(value) {
@@ -879,148 +942,6 @@ class T90ModernMapCard extends HTMLElement {
 
   _saveRoomOrder() {
     try { localStorage.setItem(this._orderKey(), JSON.stringify(this._roomOrder)); } catch {}
-  }
-
-  _settingsKey() {
-    return `t90-modern-room-settings:${this._config?.vacuum_entity || "default"}`;
-  }
-
-  _loadRoomSettings() {
-    try {
-      const raw = JSON.parse(localStorage.getItem(this._settingsKey()) || "{}");
-      return new Map(
-        Object.entries(raw).map(([key, value]) => [Number(key), value || {}]),
-      );
-    } catch {
-      return new Map();
-    }
-  }
-
-  _saveRoomSettings() {
-    try {
-      localStorage.setItem(
-        this._settingsKey(),
-        JSON.stringify(Object.fromEntries(this._roomSettings)),
-      );
-    } catch {}
-  }
-
-  _roomSetting(id) {
-    return this._roomSettings.get(id) || {};
-  }
-
-  _setRoomSetting(id, patch) {
-    const next = { ...this._roomSetting(id), ...patch };
-    // 两项都清空视为恢复默认，删除记录
-    if (!next.suction && !next.mop_type) this._roomSettings.delete(id);
-    else this._roomSettings.set(id, next);
-    this._saveRoomSettings();
-    this._renderRoomParams();
-    this._applyRoomBadges();
-  }
-
-  /** 在地图房间名标签下方注入吸力/模式徽章 */
-  _applyRoomBadges() {
-    if (!this.shadowRoot) return;
-    const SVG_NS = "http://www.w3.org/2000/svg";
-    for (const svg of this.shadowRoot.querySelectorAll("svg")) {
-      svg.querySelectorAll(".t90-room-label").forEach((label) => {
-        label.querySelector(".t90-room-badge")?.remove();
-        const id = Number(label.getAttribute("data-room-id"));
-        const setting = this._roomSetting(id);
-        const parts = [];
-        if (setting.suction) parts.push(SUCTION_SHORT[setting.suction] || setting.suction);
-        if (setting.mop_type) parts.push(MODE_BADGE[setting.mop_type] || setting.mop_type);
-        if (!parts.length) return;
-        const text = parts.join("·");
-        const width = Math.max(14, text.length * 5.4 + 6);
-        const group = document.createElementNS(SVG_NS, "g");
-        group.setAttribute("class", "t90-room-badge");
-        const rect = document.createElementNS(SVG_NS, "rect");
-        rect.setAttribute("x", `${-width / 2}`);
-        rect.setAttribute("y", "6");
-        rect.setAttribute("width", `${width}`);
-        rect.setAttribute("height", "9");
-        rect.setAttribute("rx", "2.5");
-        rect.setAttribute("fill", "#eff6ff");
-        rect.setAttribute("fill-opacity", "0.94");
-        rect.setAttribute("stroke", "#1677ff");
-        rect.setAttribute("stroke-width", "0.35");
-        const textEl = document.createElementNS(SVG_NS, "text");
-        textEl.setAttribute("y", "12.6");
-        textEl.setAttribute("text-anchor", "middle");
-        textEl.setAttribute("font-size", "5");
-        textEl.setAttribute("font-weight", "600");
-        textEl.setAttribute("font-family", "sans-serif");
-        textEl.setAttribute("fill", "#1677ff");
-        textEl.textContent = text;
-        group.append(rect, textEl);
-        label.appendChild(group);
-      });
-    }
-  }
-
-  /** 渲染每房间独立参数行（仅显示已选房间） */
-  _renderRoomParams() {
-    const container = this._roomParamsElement;
-    if (!container) return;
-    container.replaceChildren();
-    container.classList.toggle("has-rooms", this._selectedRooms.size > 0);
-    for (const [id, name] of this._selectedRooms) {
-      const setting = this._roomSetting(id);
-      const row = document.createElement("div");
-      row.className = "room-param-row";
-      const label = document.createElement("span");
-      label.className = "room-param-name";
-      label.textContent = name;
-      label.title = name;
-
-      const mkSelect = (key, options, placeholder) => {
-        const select = document.createElement("select");
-        select.classList.add(`rp-${key.replace("_", "-")}`);
-        select.setAttribute("aria-label", `${name} ${placeholder}`);
-        const empty = document.createElement("option");
-        empty.value = "";
-        empty.textContent = placeholder;
-        select.append(empty);
-        for (const [value, text] of options) {
-          const option = document.createElement("option");
-          option.value = value;
-          option.textContent = text;
-          select.append(option);
-        }
-        select.value = setting[key] || "";
-        select.classList.toggle("set", Boolean(setting[key]));
-        select.addEventListener("change", () => {
-          this._setRoomSetting(id, { [key]: select.value });
-        });
-        return select;
-      };
-
-      const suctionOptions = Object.entries(SUCTION_SHORT);
-      const mopOptions = [
-        ["vacuum", "纯扫"],
-        ["mop", "纯拖"],
-        ["vacuum_and_mop", "扫拖"],
-        ["mop_after_vacuum", "扫后拖"],
-      ];
-      const suction = mkSelect("suction", suctionOptions, "跟随默认");
-      const mop = mkSelect("mop_type", mopOptions, "跟随默认");
-      row.append(label, suction, mop);
-
-      if (setting.suction || setting.mop_type) {
-        const clear = document.createElement("button");
-        clear.className = "room-param-clear";
-        clear.title = "恢复默认";
-        clear.setAttribute("aria-label", `${name} 恢复默认`);
-        clear.innerHTML = ICONS.close;
-        clear.addEventListener("click", () => {
-          this._setRoomSetting(id, { suction: "", mop_type: "" });
-        });
-        row.append(clear);
-      }
-      container.append(row);
-    }
   }
 
   _orderedRoomIds() {
@@ -1123,62 +1044,75 @@ class T90ModernMapCard extends HTMLElement {
       });
       this._roomsElement.append(clear);
     }
+    // 未选房间 = 全屋清扫；已选 = 只清扫所选
+    const wholeHouse = this._selectedRooms.size === 0;
     this._cleanButton.disabled =
-      this._cleaning || this._stopping || this._selectedRooms.size === 0;
-    this._renderRoomParams();
+      this._cleaning || this._stopping ||
+      (wholeHouse && this._availableRooms.size === 0);
+    if (!this._cleaning) {
+      const btnSpan = this._cleanButton.querySelector("span");
+      if (btnSpan) btnSpan.textContent = wholeHouse ? "清扫全屋" : "清扫所选区域";
+    }
+  }
+
+  _cleanParams() {
+    const params = {};
+    const suction = this.shadowRoot.querySelector(".param-suction")?.value;
+    const mopType = this.shadowRoot.querySelector(".param-mop")?.value;
+    const water = this.shadowRoot.querySelector(".param-water")?.value;
+    const passes = Number(this.shadowRoot.querySelector(".param-passes")?.value || 1);
+    if (suction) params.suction = suction;
+    if (mopType) params.mop_type = mopType;
+    if (water) params.water = Number(water);
+    if (passes > 1) params.passes = passes;
+    return params;
+  }
+
+  _describeParams(params) {
+    const suctionNames = { quiet: "安静", normal: "标准", max: "强力", max_plus: "强力+" };
+    const mopNames = {
+      vacuum: "纯扫", mop: "纯拖",
+      vacuum_and_mop: "扫拖同启", mop_after_vacuum: "扫后拖",
+    };
+    const parts = [];
+    if (params.suction) parts.push(`吸力=${suctionNames[params.suction] || params.suction}`);
+    if (params.mop_type) parts.push(`模式=${mopNames[params.mop_type] || params.mop_type}`);
+    if (params.water) parts.push(`水量=${params.water >= 30 ? "高" : params.water >= 25 ? "中" : "低"}`);
+    if (params.passes > 1) parts.push(`次数=${params.passes}`);
+    return parts.join("，");
   }
 
   async _cleanSelectedRooms() {
-    if (!this._hass || !this._selectedRooms.size || this._cleaning) return;
-    const names = [...this._selectedRooms.values()].join("、");
-    if (!window.confirm(`确认清扫以下区域？\n${names}`)) return;
+    if (!this._hass || this._cleaning || this._stopping) return;
+    const wholeHouse = this._selectedRooms.size === 0;
+    const roomIds = wholeHouse ? this._orderedRoomIds() : [...this._selectedRooms.keys()];
+    if (!roomIds.length) return;
+    const names = wholeHouse
+      ? "全屋"
+      : [...this._selectedRooms.values()].join("、");
+    const params = this._cleanParams();
+    const description = this._describeParams(params);
+    const confirmText = wholeHouse
+      ? `确认清扫全屋？${description ? `\n参数：${description}` : ""}`
+      : `确认清扫以下区域？\n${names}${description ? `\n参数：${description}` : ""}`;
+    if (!window.confirm(confirmText)) return;
     this._cleaning = true;
     this._cleanButton.disabled = true;
     const buttonText = this._cleanButton.querySelector("span");
     if (buttonText) buttonText.textContent = "正在发送";
-    this._setCommandStatus("正在发送区域清扫命令…");
-    const params = {
-      rooms: [...this._selectedRooms.keys()].map((id) => {
-        const setting = this._roomSetting(id);
-        if (!setting.suction && !setting.mop_type) return id;
-        const spec = { id };
-        if (setting.suction) spec.suction = setting.suction;
-        if (setting.mop_type) spec.mop_type = setting.mop_type;
-        return spec;
-      }),
-      cleanings: 1,
-    };
-    const suction = this.shadowRoot.querySelector(".param-suction")?.value;
-    const mopType = this.shadowRoot.querySelector(".param-mop")?.value;
-    if (suction) params.suction = suction;
-    if (mopType) params.mop_type = mopType;
-    // 状态提示：优先展示每房间独立设置，否则展示全局参数
-    const perRoomText = [...this._selectedRooms]
-      .filter(([id]) => {
-        const setting = this._roomSetting(id);
-        return setting.suction || setting.mop_type;
-      })
-      .map(([id, name]) => {
-        const setting = this._roomSetting(id);
-        const parts = [
-          setting.suction && `吸力=${SUCTION_SHORT[setting.suction] || setting.suction}`,
-          setting.mop_type && `模式=${setting.mop_type === "vacuum" ? "纯扫" : setting.mop_type === "mop" ? "纯拖" : setting.mop_type === "vacuum_and_mop" ? "扫拖" : "扫后拖"}`,
-        ].filter(Boolean).join("，");
-        return `${name}（${parts}）`;
-      })
-      .join("；");
-    const paramNames = perRoomText || [
-      suction && `吸力=${this.shadowRoot.querySelector(`.param-suction option[value="${suction}"]`)?.textContent || suction}`,
-      mopType && `模式=${this.shadowRoot.querySelector(`.param-mop option[value="${mopType}"]`)?.textContent || mopType}`,
-    ].filter(Boolean).join("，");
+    this._setCommandStatus("正在发送清扫命令…");
     try {
       await this._hass.callService("vacuum", "send_command", {
         entity_id: this._config.vacuum_entity,
         command: "spot_area",
-        params,
+        params: {
+          rooms: roomIds,
+          cleanings: 1,
+          ...params,
+        },
       });
       this._setCommandStatus(
-        `已发送清扫命令：${names}${paramNames ? `（${paramNames}）` : ""}`,
+        `已发送清扫命令：${names}${description ? `（${description}）` : ""}`,
         false,
         true,
       );
@@ -1188,9 +1122,23 @@ class T90ModernMapCard extends HTMLElement {
       this._setCommandStatus(`清扫命令发送失败：${message}`, true);
     } finally {
       this._cleaning = false;
-      if (buttonText) buttonText.textContent = "清扫所选区域";
+      if (buttonText) buttonText.textContent = wholeHouse ? "清扫全屋" : "清扫所选区域";
       this._applySelection();
       this._updateVacuumState();
+    }
+  }
+
+  async _vacuumAction(service, pendingMessage, successMessage) {
+    if (!this._hass || this._cleaning || this._stopping) return;
+    this._setCommandStatus(pendingMessage);
+    try {
+      await this._hass.callService("vacuum", service, {
+        entity_id: this._config.vacuum_entity,
+      });
+      this._setCommandStatus(successMessage, false, true);
+    } catch (error) {
+      const message = error?.message || String(error);
+      this._setCommandStatus(`命令发送失败：${message}`, true);
     }
   }
 
@@ -1288,7 +1236,7 @@ if (!window.customCards.some((card) => card.type === "t90-modern-map-card")) {
   window.customCards.push({
     type: "t90-modern-map-card",
     name: "科沃斯 T90 地图（现代版）",
-    description: "现代化简约风格的 T90 地图卡片：缩放、全屏、房间点选、吸力/模式选择与区域清扫",
+    description: "现代化简约地图卡片：全屋/区域清扫、吸力/模式/水量/次数、缩放全屏、返回基站与定位",
     preview: true,
   });
 }
