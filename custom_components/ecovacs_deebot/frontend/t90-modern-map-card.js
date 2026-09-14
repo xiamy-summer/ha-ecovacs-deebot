@@ -52,7 +52,7 @@ class T90ModernMapCardEditor extends HTMLElement {
         }
         .order-list { display: grid; gap: 6px; }
         .order-row {
-          display: flex; align-items: center; gap: 6px; touch-action: none; cursor: grab;
+          display: flex; align-items: center; gap: 6px; touch-action: pan-y;
           padding: 6px 8px; border-radius: 6px; background: var(--secondary-background-color, #f5f5f5);
           border: 1px solid transparent;
         }
@@ -60,6 +60,12 @@ class T90ModernMapCardEditor extends HTMLElement {
           opacity: .5; cursor: grabbing;
           border: 1px dashed var(--primary-color);
         }
+        .drag-handle {
+          flex: 0 0 auto; touch-action: none; cursor: grab;
+          color: var(--secondary-text-color);
+          padding: 2px 4px; user-select: none; -webkit-user-select: none;
+        }
+        .order-row.dragging .drag-handle { cursor: grabbing; }
         .order-row button {
           width: 28px; height: 26px; border: 1px solid var(--divider-color); border-radius: 6px;
           background: var(--card-background-color, #fff); cursor: pointer; font-size: 13px;
@@ -93,7 +99,7 @@ class T90ModernMapCardEditor extends HTMLElement {
           <div class="order-list"></div>
           <div class="order-empty" style="display:none"></div>
           <div class="hint" style="margin-top:8px">
-            未在地图上选择区域时，启动按钮按此顺序清扫全屋。拖动房间可调整顺序（也可用 ↑↓）。
+            未在地图上选择区域时，启动按钮按此顺序清扫全屋。按住房间左侧的 ⠿ 手柄拖动可调整顺序（也可用 ↑↓）。
             排序保存在仪表盘配置中，PC/APP 同步生效。
           </div>
         </div>
@@ -234,6 +240,10 @@ class T90ModernMapCardEditor extends HTMLElement {
       const row = document.createElement("div");
       row.className = "order-row";
       row.dataset.roomId = String(id);
+      const handle = document.createElement("span");
+      handle.className = "drag-handle";
+      handle.textContent = "⠿";
+      handle.title = "拖动排序";
       const name = document.createElement("span");
       name.className = "order-name";
       name.style.cssText = "flex:1;font-size:13px";
@@ -254,15 +264,17 @@ class T90ModernMapCardEditor extends HTMLElement {
         this._updateConfig("room_order", [...order]);
         this._renderOrderList();
       });
-      row.append(name, up, down);
-      // 拖拽排序（触屏/鼠标通用；按钮区域不触发）
-      row.addEventListener("pointerdown", (event) => {
-        if (event.target.closest("button") || event.button !== 0) return;
+      row.append(handle, name, up, down);
+      // 拖拽排序：仅从手柄启动（触屏/鼠标通用），行区域仍可滚动配置面板
+      handle.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0) return;
         event.preventDefault();
-        row.setPointerCapture(event.pointerId);
+        handle.setPointerCapture(event.pointerId);
         row.classList.add("dragging");
         const onMove = (moveEvent) => {
-          const el = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY);
+          // 注意：编辑器渲染在 shadow DOM 内，document.elementFromPoint
+          // 无法穿透 shadow 边界，必须用 shadowRoot.elementFromPoint。
+          const el = this.shadowRoot.elementFromPoint(moveEvent.clientX, moveEvent.clientY);
           const target = el?.closest?.(".order-row");
           if (!target || target === row || target.parentElement !== list) return;
           const rect = target.getBoundingClientRect();
@@ -271,17 +283,18 @@ class T90ModernMapCardEditor extends HTMLElement {
         };
         const onUp = () => {
           row.classList.remove("dragging");
-          row.removeEventListener("pointermove", onMove);
-          row.removeEventListener("pointerup", onUp);
-          row.removeEventListener("pointercancel", onUp);
+          handle.removeEventListener("pointermove", onMove);
+          handle.removeEventListener("pointerup", onUp);
+          handle.removeEventListener("pointercancel", onUp);
           const newOrder = [...list.querySelectorAll(".order-row")]
             .map((el) => Number(el.dataset.roomId));
           this._updateConfig("room_order", newOrder);
           this._renderOrderList();
         };
-        row.addEventListener("pointermove", onMove);
-        row.addEventListener("pointerup", onUp);
-        row.addEventListener("pointercancel", onUp);
+        // setPointerCapture 在 handle 上，move/up 事件都会派发到 handle
+        handle.addEventListener("pointermove", onMove);
+        handle.addEventListener("pointerup", onUp);
+        handle.addEventListener("pointercancel", onUp);
       });
       list.append(row);
     });
@@ -457,22 +470,18 @@ class T90ModernMapCard extends HTMLElement {
         }
         .viewport.locked .map [data-room-id] { cursor: default; }
 
-        /* ---------- 地图悬浮工具（右上：定位/回充/全屏） ---------- */
-        .map-tools {
-          position: absolute; top: 10px; right: 10px; z-index: 2;
-          display: inline-flex; gap: 6px;
+        /* ---------- 地图下方工具（状态行右侧：定位/回充/全屏） ---------- */
+        .status-actions {
+          margin-left: auto; display: inline-flex; gap: 4px; flex: 0 0 auto;
         }
         .map-tool {
-          width: 34px; height: 34px;
+          width: 30px; height: 30px;
           display: inline-flex; align-items: center; justify-content: center;
-          border: 0; border-radius: 10px; padding: 0; cursor: pointer;
-          color: var(--primary-text-color);
-          background: color-mix(in srgb, var(--card-background-color, #fff) 72%, transparent);
-          backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
-          box-shadow: 0 1px 6px rgb(0 0 0 / .1);
+          border: 0; border-radius: 9px; padding: 0; cursor: pointer;
+          color: var(--secondary-text-color); background: transparent;
           transition: background .15s, color .15s;
         }
-        .map-tool:hover:not(:disabled) { color: var(--primary-color); }
+        .map-tool:hover:not(:disabled) { color: var(--primary-color); background: color-mix(in srgb, var(--primary-color) 10%, transparent); }
         .map-tool:active:not(:disabled) { transform: scale(.92); }
         .map-tool:disabled { opacity: .35; cursor: default; }
 
@@ -728,11 +737,15 @@ class T90ModernMapCard extends HTMLElement {
         <div class="map-wrap">
           <div class="viewport"><div class="map"><div class="loading">正在加载地图</div></div></div>
           <div class="toast" aria-live="polite" style="display:none"></div>
-          <div class="map-tools">
+        <div class="status-row">
+          <div class="status"><span class="dot"></span><span class="status-text"></span></div>
+          <span class="extra-status"></span>
+          <span class="status-actions">
             <button class="map-tool locate" title="定位扫地机" aria-label="定位扫地机">${ICONS.locate}</button>
             <button class="map-tool dock" title="返回基站" aria-label="返回基站">${ICONS.dock}</button>
             <button class="map-tool expand-float" title="全屏查看" aria-label="全屏查看">${ICONS.expand}</button>
-          </div>
+          </span>
+        </div>
         </div>
         <div class="status-row">
           <div class="status"><span class="dot"></span><span class="status-text"></span></div>
@@ -1017,8 +1030,21 @@ class T90ModernMapCard extends HTMLElement {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const svg = await response.text();
       if (!svg.includes("<svg")) throw new Error("Invalid SVG response");
+      // 内容未变化时跳过重建：避免定时刷新造成可见闪烁与滚动位置丢失
+      if (svg === this._lastSvgHtml) {
+        this._mapLoaded = true;
+        return;
+      }
+      // 重建前记录视口滚动位置，替换后恢复，防止地图刷新导致滚动条回到顶部
+      const prevTop = this._viewport?.scrollTop ?? 0;
+      const prevLeft = this._viewport?.scrollLeft ?? 0;
       this._mapElement.innerHTML = svg;
+      this._lastSvgHtml = svg;
       this._mapLoaded = true;
+      if (this._viewport) {
+        this._viewport.scrollTop = prevTop;
+        this._viewport.scrollLeft = prevLeft;
+      }
       this._availableRooms.clear();
       this._bindRoomEvents(this._mapElement, true);
       this._prepareSvg(this._mapElement.querySelector("svg"));
