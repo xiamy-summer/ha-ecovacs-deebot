@@ -267,24 +267,29 @@ const check = (label, cond, extra = "") => {
   check("兜底触发：给出超时提示", toasts.at(-1)?.msg.includes("仍未开始清扫"));
 }
 
-// 11) AI 智能托管（全屋 + agent 开启）：走 agent_clean 通道，不下发手动参数
+// 11) AI 智能托管全屋：走 agent_clean 通道，不下发手动参数
 {
   const { ctx, toasts, calls } = makeContext({ agent: true });
   await click(ctx, true);
   const sent = calls[0];
-  check("AI 托管：使用 agent_clean 命令",
+  check("AI 托管全屋：使用 agent_clean 命令",
     sent?.data.command === "agent_clean" && sent?.data.params.enable === true);
-  check("AI 托管：成功提示 + 单次下发", toasts.at(-1)?.isSuccess === true && calls.length === 1);
-  check("AI 托管：成功后乐观锁定", ctx._pendingClean === true);
+  check("AI 托管全屋：rooms 为空（走 Clean START）",
+    Array.isArray(sent?.data.params.rooms) && sent.data.params.rooms.length === 0);
+  check("AI 托管全屋：成功提示 + 单次下发", toasts.at(-1)?.isSuccess === true && calls.length === 1);
+  check("AI 托管全屋：成功后乐观锁定", ctx._pendingClean === true);
 }
 
-// 12) 已选房间时即使 agent 为 true 也走 spot_area（托管仅全屋可用）
+// 12) AI 智能托管 + 选区（与 App 智能体模式一致）：仍走 agent_clean，仅带房间 ID
 {
   const { ctx, calls } = makeContext({ agent: true, selected: [9] });
   await click(ctx, true);
   const sent = calls[0];
-  check("选区模式：忽略 agent，走 spot_area",
-    sent?.data.command === "spot_area" && JSON.stringify(sent?.data.params.rooms) === "[9]");
+  check("AI 托管选区：走 agent_clean 且带所选房间",
+    sent?.data.command === "agent_clean"
+    && JSON.stringify(sent?.data.params.rooms) === "[9]"
+    && sent?.data.params.enable === true);
+  check("AI 托管选区：不下发手动参数", sent?.data.params.suction === undefined);
 }
 
 console.log(failed === 0 ? "\n全部用例通过" : `\n${failed} 个用例失败`);

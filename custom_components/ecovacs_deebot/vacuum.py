@@ -254,10 +254,13 @@ class EcovacsVacuum(
             )
 
         if command == "agent_clean":
-            # AI 智能托管（App 报文实测，jkzzec 1.103.0）：
-            # App 切换「AI 智能托管」开关下发 setSwitchState {"agentClean": 1|0}；
-            # 开启后由设备端按房间类型/地面材质自主生成吸力/水量等参数，
-            # 全屋清洁走 Clean(START) 通道，不下发任何参数。
+            # AI 智能托管 / App「智能体模式」（App 报文实测，jkzzec 1.103.0）：
+            # App 切换该模式下发 setSwitchState {"agentClean": 1|0}；
+            # 智能体模式下仍可点选房间后启动（App 界面行为）：
+            # - 全屋：走 Clean(START) 全屋通道
+            # - 选区：走 freeClean 短格式（仅房间 ID）
+            # 两种都不下发手动参数——吸力/水量等由设备端按房间类型/
+            # 地面材质托管生成。
             # 注意：getCleanPreference 在该固件上为 20003 rcp not support，
             # 托管开关不是 clean.preference，而是 switchState.agentClean。
             enable = params.get("enable", True)
@@ -265,7 +268,12 @@ class EcovacsVacuum(
                 CustomCommand("setSwitchState", {"agentClean": 1 if enable else 0})
             )
             if enable:
-                await self._clean_command(CleanAction.START)
+                rooms = params.get("rooms") or []
+                if rooms:
+                    room_ids = ";".join(f"1,{int(r)}" for r in rooms)
+                    await self._device.execute_command(T90FreeCleanV2(room_ids))
+                else:
+                    await self._clean_command(CleanAction.START)
             return
 
         if command in ["spot_area", "custom_area"]:

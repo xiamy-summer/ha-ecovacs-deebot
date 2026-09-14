@@ -994,7 +994,7 @@ class T90ModernMapCard extends HTMLElement {
                 <button class="seg" data-value="off"><span>关闭</span></button>
                 <button class="seg" data-value="on"><span>开启</span></button>
               </div>
-              <div class="agent-hint">开启后吸力/水量/模式/效率由机器人按房间类型与地面材质自主决定（仅全屋清扫可用）</div>
+              <div class="agent-hint">开启后吸力/水量/模式/效率由机器人按房间类型与地面材质自主决定；可清扫全屋，也可点选地图上的房间</div>
             </div>
             <div class="param-block">
               <div class="param-head">
@@ -1137,6 +1137,35 @@ class T90ModernMapCard extends HTMLElement {
         if (!seg) return;
         const param = row.dataset.param;
         const value = seg.dataset.value;
+        if (param === "agent") {
+          // 与 App 一致：进入/退出智能体模式立即下发开关，
+          // 关闭时设备恢复手动参数模式（下次手动启动参数才生效）
+          this._params.agent = value === "on";
+          this._syncParamUI();
+          this._applySelection();
+          if (this._hass && this._config?.vacuum_entity) {
+            this._hass
+              .callService("vacuum", "send_command", {
+                entity_id: this._config.vacuum_entity,
+                command: "agent_clean",
+                params: { enable: this._params.agent },
+              })
+              .then(
+                () =>
+                  this._setCommandStatus(
+                    this._params.agent ? "已开启 AI 智能托管" : "已关闭 AI 智能托管",
+                    false,
+                    true,
+                  ),
+                (error) =>
+                  this._setCommandStatus(
+                    `AI 智能托管开关发送失败：${error?.message || error}`,
+                    true,
+                  ),
+              );
+          }
+          return;
+        }
         if (param === "passes") {
           this._params.passes = Number(value);
         } else {
@@ -1538,11 +1567,11 @@ class T90ModernMapCard extends HTMLElement {
         ? "发送中…"
         : wholeHouse ? "全屋" : `${this._selectedRooms.size} 个区域`;
     }
-    // AI 智能托管：仅全屋清扫（未选房间）时显示；开启时隐藏手动参数区
+    // AI 智能托管：始终显示（App 智能体模式独立于选房）；开启时隐藏手动参数区
     const agentBlock = this.shadowRoot.querySelector(".agent-block");
-    if (agentBlock) agentBlock.style.display = wholeHouse ? "" : "none";
+    if (agentBlock) agentBlock.style.display = "";
     this.shadowRoot.querySelector(".params")?.classList.toggle(
-      "agent-on", wholeHouse && this._params.agent,
+      "agent-on", this._params.agent,
     );
     this._syncButtons();
   }
@@ -1599,7 +1628,11 @@ class T90ModernMapCard extends HTMLElement {
     const wholeHouse = this._selectedRooms.size === 0;
     const raw = wholeHouse ? this._orderedRoomIds() : [...this._selectedRooms.keys()];
     const roomIds = raw.map((id) => Number(id)).filter((id) => Number.isFinite(id));
-    if (!roomIds.length) {
+    // AI 智能托管（与 App「智能体模式」一致）：开关独立于选房——
+    // 全屋托管不需要房间列表；选区托管走 freeClean 短格式（仅房间 ID），
+    // 参数由设备端托管生成，不下发手动参数。
+    const agentMode = this._params.agent;
+    if (!roomIds.length && !(agentMode && wholeHouse)) {
       this._setCommandStatus("未获取到房间列表：请稍后重试（正在重新加载地图）", true);
       this._refreshMap(true);
       return;
@@ -1607,11 +1640,10 @@ class T90ModernMapCard extends HTMLElement {
     const names = wholeHouse
       ? "全屋"
       : [...this._selectedRooms.values()].join("、");
-    const agentMode = wholeHouse && this._params.agent;
     const params = agentMode ? {} : this._cleanParams();
     const description = this._describeParams(params);
     const confirmText = agentMode
-      ? "确认以「AI 智能托管」清扫全屋？\n吸力/水量/模式/效率由机器人按房间自主决定"
+      ? `确认以「AI 智能托管」清扫${wholeHouse ? "全屋" : `以下区域？\n${names}`}\n吸力/水量/模式/效率由机器人按房间自主决定`
       : wholeHouse
         ? `确认清扫全屋？${description ? `\n参数：${description}` : ""}`
         : `确认清扫以下区域？\n${names}${description ? `\n参数：${description}` : ""}`;
@@ -1634,11 +1666,12 @@ class T90ModernMapCard extends HTMLElement {
     try {
       if (agentMode) {
         // AI 智能托管（实测 App 报文）：setSwitchState {"agentClean":1}
-        // 开启后由设备端生成参数，全屋走 Clean(START)，不下发任何参数
+        // 全屋走 Clean(START)；选区走 freeClean 短格式（仅房间 ID），
+        // 两种都不下发手动参数——参数由设备端托管生成
         await this._hass.callService("vacuum", "send_command", {
           entity_id: this._config.vacuum_entity,
           command: "agent_clean",
-          params: { enable: true },
+          params: { enable: true, rooms: wholeHouse ? [] : roomIds },
         });
       } else {
         await this._hass.callService("vacuum", "send_command", {
@@ -1653,7 +1686,7 @@ class T90ModernMapCard extends HTMLElement {
       }
       this._setCommandStatus(
         agentMode
-          ? "已发送 AI 智能托管清扫命令：全屋"
+          ? `已发送 AI 智能托管清扫命令：${names}`
           : `已发送清扫命令：${names}${description ? `（${description}）` : ""}`,
         false,
         true,
