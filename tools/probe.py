@@ -71,7 +71,9 @@ from deebot_client.util import md5  # noqa: E402
 
 import aiohttp  # noqa: E402
 
-COUNTRY = "cn"
+# 必须大写 "CN"：deebot_client 按大小写敏感比较 alpha_2_country 与 "CN"，
+# 传 "cn" 会被拼成已失效的 gl-cn-api.ecovacs.com（DNS 无 A 记录）
+COUNTRY = "CN"
 
 PROBE_COMMANDS: list[tuple[str, Any]] = [
     # (说明, 命令实例)

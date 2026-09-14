@@ -74,7 +74,11 @@ from deebot_client.events import (  # noqa: E402
 from deebot_client.mqtt_client import MqttClient, create_mqtt_config  # noqa: E402
 from deebot_client.util import md5  # noqa: E402
 
-COUNTRY = "cn"
+# 必须大写："CN"！deebot_client 的 create_rest_config 里
+#   tld = "com" if alpha_2_country != COUNTRY_CHINA else country_url
+# 是大小写敏感比较，传 "cn" 会被拼成已失效的 gl-cn-api.ecovacs.com
+# （该域名 DNS 已无 A 记录），报 ClientConnectorDNSError。
+COUNTRY = "CN"
 
 # 只读查询清单：全部是 get*，不改变设备任何状态。
 # 前两条是本次调研的核心：
