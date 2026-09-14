@@ -28,7 +28,6 @@ from deebot_client.events import Event
 from deebot_client.message import (
     HandlingResult,
     HandlingState,
-    Message,
     MessageBodyDataDict,
 )
 
@@ -62,8 +61,8 @@ class GetSwitchState(JsonCommandWithMessageHandling, MessageBodyDataDict):
         return _notify_agent_clean(event_bus, data)
 
 
-class OnSwitchState(Message, MessageBodyDataDict):
-    """onSwitchState 设备推送消息。"""
+class OnSwitchState(MessageBodyDataDict):
+    """onSwitchState 设备推送消息（单继承：MessageBodyDataDict 已是 Message 子类）。"""
 
     NAME = "onSwitchState"
 
