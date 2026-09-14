@@ -1,0 +1,220 @@
+#!/usr/bin/env node
+/**
+ * 启动流程无头仿真：从卡片源码里抽出真实的 _cleanSelectedRooms / _askConfirm /
+ * _resolveConfirm 方法，配上 mock 的 this，验证"点启动"这条链路的每种分支。
+ *
+ * 为什么需要它：这条链路以前有多个静默 return（锁定/无房间/原生 confirm 被
+ * WebView 拦截），用户只能看到"点了没反应"，HA 日志里也没有任何痕迹。
+ * 现在改成"任何一次点击都必须有 toast 反馈 + 卡片内确认框"，用这个脚本保证
+ * 这些分支不会再退化。
+ *
+ * 用法：node tools/start_flow_test.mjs
+ */
+
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const FILE = resolve(
+  here,
+  "../custom_components/ecovacs_deebot/frontend/t90-modern-map-card.js",
+);
+const source = readFileSync(FILE, "utf8");
+
+/** 从源码里按名字抽出类方法，转成可直接 new Function 的函数表达式源码。 */
+function extractMethod(name) {
+  const asyncAt = source.indexOf(`  async ${name}(`);
+  const plainAt = source.indexOf(`  ${name}(`);
+  const at = asyncAt !== -1 && (plainAt === -1 || asyncAt < plainAt) ? asyncAt : plainAt;
+  if (at === -1) throw new Error(`方法 ${name} 未找到`);
+  const isAsync = at === asyncAt;
+  const open = source.indexOf("{", at);
+  let depth = 0;
+  let i = open;
+  let quote = null;
+  while (i < source.length) {
+    const ch = source[i];
+    if (quote) {
+      if (ch === "\\") i += 1;
+      else if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'" || ch === "`") quote = ch;
+    else if (ch === "{") depth += 1;
+    else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        // 方法简写 -> 函数表达式：`async foo(a) {` => `async function foo(a) {`
+        const head = `${isAsync ? "async function" : "function"} ${name}`;
+        const body = source.slice(open, i + 1);
+        return `${head}${source.slice(at + (isAsync ? `  async ${name}` : `  ${name}`).length, open)}${body}`;
+      }
+    }
+    i += 1;
+  }
+  throw new Error(`方法 ${name} 花括号不配对`);
+}
+
+const methodNames = ["_cleanSelectedRooms", "_askConfirm", "_resolveConfirm"];
+const methods = Object.fromEntries(
+  methodNames.map((name) => [name, extractMethod(name)]),
+);
+
+// 定时器 mock：既能断言"超时兜底"存在，也能手动触发它
+const timers = [];
+const cleared = [];
+globalThis.window = {
+  setTimeout: (fn, ms) => {
+    timers.push({ fn, ms });
+    return timers.length;
+  },
+  clearTimeout: (id) => cleared.push(id),
+};
+
+function makeContext({
+  state = "docked",
+  rooms = [9, 11],
+  selected = [],
+  fail = false,
+  hang = false,
+} = {}) {
+  const toasts = [];
+  const calls = [];
+  let release;
+  const ctx = {
+    _hass: {
+      states: {
+        "vacuum.t90": { state },
+        "image.t90_map": { attributes: { rooms } },
+      },
+      callService: async (domain, service, data) => {
+        calls.push({ domain, service, data });
+        if (fail) throw new Error("boom");
+        if (hang) await new Promise((r) => (release = r));
+      },
+    },
+    _config: { vacuum_entity: "vacuum.t90", image_entity: "image.t90_map" },
+    _selectedRooms: new Map(selected.map((id) => [id, `房间${id}`])),
+    _cleaning: false,
+    _stopping: false,
+    _selectionLocked: state === "cleaning" || state === "paused",
+    _cleanGuard: null,
+    _confirmResolve: null,
+    _refreshed: 0,
+    _startButton: {
+      _scope: { textContent: "" },
+      style: { display: "" },
+      disabled: false,
+      querySelector: (sel) => (sel === ".start-scope" ? ctx._startButton._scope : null),
+    },
+    _confirmBox: {
+      style: { display: "none" },
+      querySelector: () => ({ textContent: "" }),
+    },
+    _vacuumState: () => state,
+    _orderedRoomIds: () => [...rooms],
+    _cleanParams: () => ({ suction: "max" }),
+    _describeParams: (p) => `吸力=${p.suction}`,
+    _setCommandStatus: (msg, isError = false, isSuccess = false) =>
+      toasts.push({ msg, isError, isSuccess }),
+    _applySelection: () => {},
+    _updateVacuumState: () => {},
+    _syncRunState: () => {
+      ctx._selectionLocked = ctx._vacuumState() === "cleaning" || ctx._vacuumState() === "paused";
+    },
+    _refreshMap: () => {
+      ctx._refreshed += 1;
+    },
+  };
+  for (const [name, body] of Object.entries(methods)) {
+    // eslint-disable-next-line no-new-func
+    ctx[name] = new Function(`return (${body});`)();
+  }
+  return { ctx, toasts, calls, release: () => release?.() };
+}
+
+/** 触发一次点击，并自动回应卡片内确认框。 */
+async function click(ctx, answer) {
+  const promise = ctx._cleanSelectedRooms();
+  await new Promise((r) => setImmediate(r));
+  if (ctx._confirmResolve) ctx._resolveConfirm(answer);
+  await promise;
+}
+
+let failed = 0;
+const check = (label, cond, extra = "") => {
+  console.log(`${cond ? "PASS" : "FAIL"}  ${label}${extra ? `  ${extra}` : ""}`);
+  if (!cond) failed += 1;
+};
+
+// 1) 全屋 + 确认
+{
+  const { ctx, toasts, calls } = makeContext();
+  await click(ctx, true);
+  const sent = calls[0];
+  check("全屋清扫：确认后下发命令", calls.length === 1);
+  check("使用 vacuum.send_command + spot_area",
+    sent?.domain === "vacuum" && sent?.service === "send_command" && sent?.data.command === "spot_area");
+  check("全屋房间列表来自设备房间表", JSON.stringify(sent?.data.params.rooms) === "[9,11]");
+  check("参数透传", sent?.data.params.suction === "max");
+  check("成功后给出提示", toasts.at(-1)?.isSuccess === true);
+  check("结束后解除 _cleaning", ctx._cleaning === false);
+}
+
+// 2) 确认框取消：不下发
+{
+  const { ctx, toasts, calls } = makeContext();
+  await click(ctx, false);
+  check("取消确认：不下发命令", calls.length === 0);
+  check("取消确认：提示已取消", toasts.at(-1)?.msg === "已取消启动");
+}
+
+// 3) 清扫中：明确提示而不是静默
+{
+  const { ctx, toasts, calls } = makeContext({ state: "cleaning" });
+  await click(ctx, true);
+  check("清扫中：不下发命令", calls.length === 0);
+  check("清扫中：给出可见提示", Boolean(toasts.at(-1)?.isError));
+}
+
+// 4) 上一条命令未结束
+{
+  const { ctx, toasts } = makeContext();
+  ctx._cleaning = true;
+  await click(ctx, true);
+  check("发送中再次点击：给出可见提示", toasts.at(-1)?.isError === true);
+}
+
+// 5) 无房间：提示 + 触发刷新地图
+{
+  const { ctx, toasts } = makeContext({ rooms: [], selected: [] });
+  await click(ctx, true);
+  check("无房间：给出可见提示", toasts.at(-1)?.isError === true);
+  check("无房间：自动刷新地图", ctx._refreshed === 1);
+}
+
+// 6) 服务调用失败：错误提示 + 解锁
+{
+  const { ctx, toasts } = makeContext({ fail: true });
+  await click(ctx, true);
+  check("调用失败：错误提示", toasts.at(-1)?.msg.includes("清扫命令发送失败"));
+  check("调用失败：解除 _cleaning", ctx._cleaning === false);
+}
+
+// 7) 兜底超时解锁：命令卡住时 20 秒后自动解锁
+{
+  timers.length = 0;
+  const { ctx, toasts, release: releaseHang } = makeContext({ hang: true });
+  const promise = ctx._cleanSelectedRooms();
+  await new Promise((r) => setImmediate(r));
+  ctx._resolveConfirm(true);
+  await new Promise((r) => setImmediate(r));
+  check("命令卡住时设置了 20s 兜底计时器", timers.length === 1 && timers[0].ms === 20000);
+  check("此时仍处于发送中（按钮未解锁）", ctx._cleaning === true);
+  timers[0].fn();
+  check("兜底触发：解锁并提示超时", ctx._cleaning === false && toasts.at(-1)?.msg.includes("超时"));
+  releaseHang();
+  await promise;
+}
+
+console.log(failed === 0 ? "\n全部用例通过" : `\n${failed} 个用例失败`);
+process.exit(failed === 0 ? 0 : 1);

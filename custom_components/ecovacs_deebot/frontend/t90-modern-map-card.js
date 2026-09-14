@@ -550,6 +550,8 @@ class T90ModernMapCard extends HTMLElement {
     this._stopping = false;
     this._selectionLocked = false;
     this._toastTimer = null;
+    this._cleanGuard = null;
+    this._confirmResolve = null;
     this._lastRefresh = 0;
     this._timer = null;
     this._roomOrder = [];
@@ -773,6 +775,36 @@ class T90ModernMapCard extends HTMLElement {
           opacity: .85; padding-left: 2px;
         }
 
+        /* ---------- 启动前确认（卡片内确认，不用 window.confirm） ----------
+           HA 手机 APP（iOS/Android WebView）会静默拦截原生对话框，
+           confirm() 直接返回 false 且不弹任何东西 —— 表现就是"点了启动没反应"。 */
+        .confirm-sheet {
+          border: 1px solid color-mix(in srgb, var(--primary-color) 35%, transparent);
+          border-radius: 13px; padding: 12px 14px;
+          background: color-mix(in srgb, var(--primary-color) 6%, transparent);
+        }
+        .confirm-text {
+          font-size: 13px; line-height: 1.65; white-space: pre-line;
+          color: var(--primary-text-color);
+        }
+        .confirm-actions {
+          display: grid; grid-template-columns: 1fr 1.4fr; gap: 10px; margin-top: 12px;
+        }
+        .confirm-actions button {
+          height: 38px; border-radius: 11px; cursor: pointer;
+          border: 1px solid var(--divider-color);
+          background: var(--card-background-color, #fff);
+          color: var(--primary-text-color);
+          font-size: 13.5px; font-weight: 600;
+        }
+        .confirm-actions button:active { transform: scale(.97); }
+        .confirm-actions .confirm-yes {
+          border: 0; color: #fff;
+          background: linear-gradient(90deg,
+            color-mix(in srgb, var(--primary-color, #03a9f4) 62%, #7986cb),
+            var(--primary-color, #03a9f4));
+        }
+
         /* ---------- 参数区（App 风格） ---------- */
         .params { padding: 8px 16px 18px; display: grid; gap: 14px; }
         .param-head {
@@ -936,6 +968,13 @@ class T90ModernMapCard extends HTMLElement {
         <div class="params-wrap">
           <div class="start-wrap">
             <button class="start-btn" disabled>${ICONS.play}<span class="start-text">启 动</span><span class="start-scope"></span></button>
+            <div class="confirm-sheet" style="display:none">
+              <div class="confirm-text"></div>
+              <div class="confirm-actions">
+                <button class="confirm-no">取消</button>
+                <button class="confirm-yes">开始清扫</button>
+              </div>
+            </div>
             <div class="active-actions">
               <button class="pause-btn"><span class="pi-pause">${ICONS.pause}</span><span class="pi-play" style="display:none">${ICONS.play}</span><span class="pause-text">暂停</span></button>
               <button class="end-btn">${ICONS.stop}<span class="end-text">结束并返回</span></button>
@@ -1034,6 +1073,21 @@ class T90ModernMapCard extends HTMLElement {
     this._dialogMapElement = this.shadowRoot.querySelector(".dialog-map");
     this._extraStatusElement = this.shadowRoot.querySelector(".extra-status");
     this._viewport = this.shadowRoot.querySelector(".viewport");
+    // 主操作按钮最先绑定：即使后面某个绑定抛错（选择器失配 / ResizeObserver
+    // 等），启动/暂停/结束也必须可用。以前这些绑在全段最后，任何一处异常都会
+    // 让"启动"变成完全没反应，而 HA 日志里看不到任何痕迹。
+    this._confirmBox = this.shadowRoot.querySelector(".confirm-sheet");
+    this._confirmYes = this.shadowRoot.querySelector(".confirm-yes");
+    this._confirmNo = this.shadowRoot.querySelector(".confirm-no");
+    this._startButton.addEventListener("click", () => this._cleanSelectedRooms());
+    this._pauseButton.addEventListener("click", () => this._togglePause());
+    this._endButton.addEventListener("click", () => this._endAndReturn());
+    this._clearButton.addEventListener("click", () => {
+      this._selectedRooms.clear();
+      this._applySelection();
+    });
+    this._confirmYes?.addEventListener("click", () => this._resolveConfirm(true));
+    this._confirmNo?.addEventListener("click", () => this._resolveConfirm(false));
     if (!this._resizeObserver) {
       this._resizeObserver = new ResizeObserver(() => this._applyZoom());
       this._resizeObserver.observe(this._viewport);
@@ -1057,13 +1111,6 @@ class T90ModernMapCard extends HTMLElement {
       event.preventDefault();
       this._setZoom(this._zoom + (event.deltaY < 0 ? 0.1 : -0.1));
     }, { passive: false });
-    this._startButton.addEventListener("click", () => this._cleanSelectedRooms());
-    this._pauseButton.addEventListener("click", () => this._togglePause());
-    this._endButton.addEventListener("click", () => this._endAndReturn());
-    this._clearButton.addEventListener("click", () => {
-      this._selectedRooms.clear();
-      this._applySelection();
-    });
     this.shadowRoot.querySelector(".dock").addEventListener("click", () =>
       this._vacuumAction("return_to_base", "正在发送返回基站命令…", "已发送返回基站命令"));
     this.shadowRoot.querySelector(".locate").addEventListener("click", () =>
@@ -1500,10 +1547,31 @@ class T90ModernMapCard extends HTMLElement {
   }
 
   async _cleanSelectedRooms() {
-    if (!this._hass || this._cleaning || this._stopping || this._selectionLocked) return;
+    if (!this._hass) return;
+    // 任何一次点击都必须有可见反馈：之前这里多处静默 return，
+    // 表现就是"点了启动完全没有反应"，无从判断卡在哪一步。
+    if (this._cleaning || this._stopping) {
+      this._setCommandStatus("上一条清扫命令仍在发送中，请稍候…", true);
+      return;
+    }
+    if (this._selectionLocked) {
+      this._setCommandStatus(
+        this._vacuumState() === "paused"
+          ? "已暂停：请先「继续清扫」或「结束并返回」"
+          : "清扫进行中：请先「暂停」或「结束并返回」",
+        true,
+      );
+      this._syncRunState();
+      return;
+    }
     const wholeHouse = this._selectedRooms.size === 0;
-    const roomIds = wholeHouse ? this._orderedRoomIds() : [...this._selectedRooms.keys()];
-    if (!roomIds.length) return;
+    const raw = wholeHouse ? this._orderedRoomIds() : [...this._selectedRooms.keys()];
+    const roomIds = raw.map((id) => Number(id)).filter((id) => Number.isFinite(id));
+    if (!roomIds.length) {
+      this._setCommandStatus("未获取到房间列表：请稍后重试（正在重新加载地图）", true);
+      this._refreshMap(true);
+      return;
+    }
     const names = wholeHouse
       ? "全屋"
       : [...this._selectedRooms.values()].join("、");
@@ -1512,12 +1580,22 @@ class T90ModernMapCard extends HTMLElement {
     const confirmText = wholeHouse
       ? `确认清扫全屋？${description ? `\n参数：${description}` : ""}`
       : `确认清扫以下区域？\n${names}${description ? `\n参数：${description}` : ""}`;
-    if (!window.confirm(confirmText)) return;
+    if (!(await this._askConfirm(confirmText))) {
+      this._setCommandStatus("已取消启动");
+      return;
+    }
     this._cleaning = true;
-    this._startButton.disabled = true;
-    const btnScope = this._startButton.querySelector(".start-scope");
+    this._applySelection();
+    const btnScope = this._startButton?.querySelector(".start-scope");
     if (btnScope) btnScope.textContent = "发送中…";
     this._setCommandStatus("正在发送清扫命令…");
+    // 兜底：命令卡住（网络/令牌问题）时 20 秒后自动解锁，避免按钮永久失效
+    this._cleanGuard = window.setTimeout(() => {
+      if (!this._cleaning) return;
+      this._cleaning = false;
+      this._setCommandStatus("命令发送超时，已解除锁定；请检查网络后重试", true);
+      this._applySelection();
+    }, 20000);
     try {
       await this._hass.callService("vacuum", "send_command", {
         entity_id: this._config.vacuum_entity,
@@ -1538,10 +1616,38 @@ class T90ModernMapCard extends HTMLElement {
       const message = error?.message || String(error);
       this._setCommandStatus(`清扫命令发送失败：${message}`, true);
     } finally {
+      if (this._cleanGuard) {
+        window.clearTimeout(this._cleanGuard);
+        this._cleanGuard = null;
+      }
       this._cleaning = false;
       this._applySelection();
       this._updateVacuumState();
     }
+  }
+
+  /** 卡片内确认框（替代 window.confirm，见 .confirm-sheet 注释）。 */
+  _askConfirm(text) {
+    const box = this._confirmBox;
+    if (!box) return Promise.resolve(true); // 极端情况下不阻塞启动
+    const textEl = box.querySelector(".confirm-text");
+    if (textEl) textEl.textContent = text;
+    box.style.display = "";
+    if (this._startButton) this._startButton.style.display = "none";
+    return new Promise((resolve) => {
+      this._confirmResolve = resolve;
+    });
+  }
+
+  _resolveConfirm(ok) {
+    const resolve = this._confirmResolve;
+    this._confirmResolve = null;
+    if (this._confirmBox) this._confirmBox.style.display = "none";
+    if (this._startButton && !this._selectionLocked) {
+      this._startButton.style.display = "";
+    }
+    this._applySelection();
+    resolve?.(ok);
   }
 
   async _vacuumAction(service, pendingMessage, successMessage) {
@@ -1681,9 +1787,13 @@ class T90ModernMapCard extends HTMLElement {
     if (active && this._selectedRooms.size) {
       this._selectedRooms.clear();
     }
+    if (active && this._confirmResolve) {
+      // 清扫态出现时，撤销未决的启动确认（避免两个按钮区同时可见）
+      this._resolveConfirm(false);
+    }
     // 主按钮区切换：启动 ↔ 暂停/结束并返回
     if (this._startButton && this._activeActions) {
-      this._startButton.style.display = active ? "none" : "";
+      this._startButton.style.display = active || this._confirmResolve ? "none" : "";
       this._activeActions.classList.toggle("show", active);
     }
     // 暂停按钮：图标+文案随状态切换

@@ -20,6 +20,7 @@ from .const import (
     CARD_FILENAME,
     CARD_LEGACY_FILENAMES,
     CARD_STATIC_URL,
+    DATA_CARD_URL,
     DATA_EXTRA_CARD_REGISTERED,
     DATA_STATIC_PATH_REGISTERED,
     DOMAIN,
@@ -31,14 +32,27 @@ _LOGGER = logging.getLogger(__name__)
 _FRONTEND_DIR = Path(__file__).parent / "frontend"
 
 
-def _card_module_url() -> str:
+def _card_module_url(digest: str | None = None) -> str:
     """Build the card URL with a content hash to bust browser caches."""
-    digest = "dev"
-    try:
-        digest = hashlib.md5((_FRONTEND_DIR / CARD_FILENAME).read_bytes()).hexdigest()[:8]
-    except OSError:
-        _LOGGER.warning("Map card file %s is missing", CARD_FILENAME)
-    return f"{CARD_STATIC_URL}/{CARD_FILENAME}?v={digest}"
+    return f"{CARD_STATIC_URL}/{CARD_FILENAME}?v={digest or 'dev'}"
+
+
+async def _card_module_digest(hass: HomeAssistant) -> str:
+    """Hash the card file (executor: file IO must not run in the event loop).
+
+    ``read_bytes``/``open`` directly inside the event loop triggers HA's
+    "Detected blocking call" warning during setup.
+    """
+
+    def _hash() -> str:
+        try:
+            payload = (_FRONTEND_DIR / CARD_FILENAME).read_bytes()
+        except OSError:
+            _LOGGER.warning("Map card file %s is missing", CARD_FILENAME)
+            return "dev"
+        return hashlib.md5(payload).hexdigest()[:8]
+
+    return await hass.async_add_executor_job(_hash)
 
 PLATFORMS = [
     Platform.BINARY_SENSOR,
@@ -65,6 +79,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 async def _async_register_map_card(hass: HomeAssistant) -> None:
     """Expose the bundled map card and persist its Lovelace resource."""
     domain_data = hass.data.setdefault(DOMAIN, {})
+    card_url = _card_module_url(await _card_module_digest(hass))
+    domain_data[DATA_CARD_URL] = card_url
 
     if not domain_data.get(DATA_STATIC_PATH_REGISTERED):
         await hass.http.async_register_static_paths(
@@ -99,18 +115,18 @@ async def _async_register_map_card(hass: HomeAssistant) -> None:
         ]
         if bundled_resources:
             resource = bundled_resources[0]
-            if resource.get(CONF_URL) != _card_module_url():
+            if resource.get(CONF_URL) != card_url:
                 await resources.async_update_item(
                     resource["id"],
                     {
-                        CONF_URL: _card_module_url(),
+                        CONF_URL: card_url,
                         CONF_RESOURCE_TYPE_WS: "module",
                     },
                 )
         else:
             await resources.async_create_item(
                 {
-                    CONF_URL: _card_module_url(),
+                    CONF_URL: card_url,
                     CONF_RESOURCE_TYPE_WS: "module",
                 }
             )
@@ -121,7 +137,7 @@ async def _async_register_map_card(hass: HomeAssistant) -> None:
         "for the current frontend session only"
     )
     if not domain_data.get(DATA_EXTRA_CARD_REGISTERED):
-        frontend.add_extra_js_url(hass, _card_module_url())
+        frontend.add_extra_js_url(hass, card_url)
         domain_data[DATA_EXTRA_CARD_REGISTERED] = True
 
 
@@ -149,7 +165,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: EcovacsConfigEntry) -> 
         if isinstance(entries, dict):
             entries.pop(entry.entry_id, None)
             if entries.pop(DATA_EXTRA_CARD_REGISTERED, False):
-                frontend.remove_extra_js_url(hass, _card_module_url())
+                card_url = entries.get(DATA_CARD_URL) or _card_module_url(
+                    await _card_module_digest(hass)
+                )
+                frontend.remove_extra_js_url(hass, card_url)
     return unloaded
 
 

@@ -15,6 +15,8 @@ CARD_FILENAME = "t90-modern-map-card.js"
 CARD_LEGACY_FILENAMES = ("ecovacs-t90-map-card.js",)
 DATA_STATIC_PATH_REGISTERED = "card_static_path_registered"
 DATA_EXTRA_CARD_REGISTERED = "card_extra_js_registered"
+# 本次加载实际注册的卡片 URL（含内容哈希），卸载时按同一 URL 摘除
+DATA_CARD_URL = "card_module_url"
 
 CONF_CONTINENT = "continent"
 CONF_OVERRIDE_REST_URL = "override_rest_url"

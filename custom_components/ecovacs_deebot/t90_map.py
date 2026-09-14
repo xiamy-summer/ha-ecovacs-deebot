@@ -390,6 +390,7 @@ class GetQuickCommandT90(
     def _handle_body_data_list(
         cls, event_bus: EventBus, data: list[Any]
     ) -> HandlingResult:
+        entries = cls._flatten_quick_commands(data)
         scenarios = tuple(
             {
                 "name": str(entry.get("name", f"场景 {entry.get('qcid', i)}")),
@@ -397,12 +398,32 @@ class GetQuickCommandT90(
                 "mid": entry.get("mid"),
                 "content": str(entry.get("content", "")),
             }
-            for i, entry in enumerate(data)
-            if isinstance(entry, dict) and entry.get("content")
+            for i, entry in enumerate(entries)
+            if entry.get("content")
         )
         _SCENARIOS[event_bus] = scenarios
         event_bus.notify(ScenariosEvent(scenarios))
         return HandlingResult(HandlingState.SUCCESS, {"scenarios": scenarios})
+
+    @staticmethod
+    def _flatten_quick_commands(data: list[Any]) -> list[dict[str, Any]]:
+        """Normalise the two shapes seen in the wild.
+
+        - 扁平：``[{"name": ..., "content": ...}, ...]``（多数固件）
+        - 嵌套：``[{"array": [{...}, {...}], "mid": ..., "sort": ""}]``
+          —— 1.103.0 国行固件（jkzzec）实测为这种，场景都在 ``array`` 里。
+        早期实现只遍历外层，导致 ``ScenariosEvent`` 恒为空、场景实体没有选项。
+        """
+        out: list[dict[str, Any]] = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            nested = item.get("array")
+            if isinstance(nested, list):
+                out.extend(entry for entry in nested if isinstance(entry, dict))
+            elif "content" in item:
+                out.append(item)
+        return out
 
     @classmethod
     def _handle_body_data(
