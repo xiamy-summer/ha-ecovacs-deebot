@@ -567,6 +567,7 @@ class T90ModernMapCard extends HTMLElement {
       water: null,
       efficiency: "",
       passes: 1,
+      agent: false,
     };
   }
 
@@ -1551,11 +1552,13 @@ class T90ModernMapCard extends HTMLElement {
         ? "发送中…"
         : wholeHouse ? "全屋" : `${this._selectedRooms.size} 个区域`;
     }
-    // AI 智能托管：始终显示（App 智能体模式独立于选房）；开启时隐藏手动参数区
+    // AI 智能托管：始终显示（App 智能体模式独立于选房）；开启时隐藏手动参数区。
+    // 注意第二参数必须是布尔：toggle(name, undefined) 等于无强制切换，
+    // 会把类"翻转"（有则去/无则加），造成参数区随每次 hass 推送闪烁
     const agentBlock = this.shadowRoot.querySelector(".agent-block");
     if (agentBlock) agentBlock.style.display = "";
     this.shadowRoot.querySelector(".params")?.classList.toggle(
-      "agent-on", this._params.agent,
+      "agent-on", this._params.agent === true,
     );
     this._syncButtons();
   }

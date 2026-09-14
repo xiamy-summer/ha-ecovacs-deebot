@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>flash repro</title>
+<script src="/custom_components/ecovacs_deebot/frontend/t90-modern-map-card.js"></script>
+<style>
+  body { margin: 0; font-family: sans-serif; }
+  #host { width: 520px; }
+</style>
+</head>
+<body>
+<div id="host"></div>
+<pre id="log"></pre>
+<script>
+const logEl = document.getElementById("log");
+const lines = [];
+function log(msg) {
+  lines.push(msg);
+  logEl.textContent = lines.join("\n");
+}
+
+// 极简地图 SVG：两个房间（含 data-room-id，供点选/选中逻辑用）
+const SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100">
+  <rect data-room-id="9" x="5" y="5" width="90" height="90" fill="#cde"/>
+  <rect data-room-id="11" x="105" y="5" width="90" height="90" fill="#dec"/>
+</svg>`;
+const svgUrl = URL.createObjectURL(new Blob([SVG], { type: "image/svg+xml" }));
+
+const hass = {
+  states: {
+    "vacuum.t90": { state: "docked", attributes: {} },
+    "image.t90_map": {
+      state: "idle",
+      attributes: { entity_picture: svgUrl, rooms: [{ id: 9, name: "房间9" }, { id: 11, name: "房间11" }] },
+    },
+  },
+  hassUrl: (p) => p,
+  callService: async () => {},
+  connection: { subscribeMessage: async () => () => {} },
+};
+
+(async () => {
+  const el = document.createElement("t90-modern-map-card");
+  // 模拟 HA 挂载顺序：setConfig → append → set hass（首帧）→ 100ms 后再次推 hass
+  el.setConfig({ title: "T90 地图", image_entity: "image.t90_map", vacuum_entity: "vacuum.t90", refresh_interval: 10 });
+  document.getElementById("host").appendChild(el);
+  el.hass = hass;
+
+  // 连续采样 3 秒：agent 关闭时，手动参数块任何时候都不应 display:none
+  const check = () => {
+    const root = el.shadowRoot;
+    if (!root) return;
+    const params = root.querySelector(".params");
+    if (!params) return;
+    const on = params.classList.contains("agent-on");
+    if (on) log(`T+${Date.now() - t0}ms  !! .params 出现 agent-on（agent 应为 false）`);
+    params.querySelectorAll(".param-block:not(.agent-block)").forEach((b) => {
+      const d = getComputedStyle(b).display;
+      if (d === "none") {
+        const title = b.querySelector(".param-title")?.textContent || "?";
+        log(`T+${Date.now() - t0}ms  !! 参数块被隐藏：${title}`);
+      }
+    });
+  };
+  const t0 = Date.now();
+  const timer = setInterval(check, 16);
+  setTimeout(() => { clearInterval(timer); log("采样结束：共 " + (lines.length) + " 行（0 行异常 = 无闪烁）"); }, 3000);
+  setTimeout(() => el.hass = hass, 100);
+  setTimeout(() => el.hass = hass, 400);
+})();
+</script>
+</body>
+</html>
