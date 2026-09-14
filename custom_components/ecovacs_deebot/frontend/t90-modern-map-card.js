@@ -1145,32 +1145,9 @@ class T90ModernMapCard extends HTMLElement {
         const param = row.dataset.param;
         const value = seg.dataset.value;
         if (param === "agent") {
-          // 与 App 一致：进入/退出智能体模式立即下发开关，
-          // 关闭时设备恢复手动参数模式（下次手动启动参数才生效）
-          this._params.agent = value === "on";
-          this._syncParamUI();
-          this._applySelection();
-          if (this._hass && this._config?.vacuum_entity) {
-            this._hass
-              .callService("vacuum", "send_command", {
-                entity_id: this._config.vacuum_entity,
-                command: "agent_clean",
-                params: { enable: this._params.agent },
-              })
-              .then(
-                () =>
-                  this._setCommandStatus(
-                    this._params.agent ? "已开启 AI 智能托管" : "已关闭 AI 智能托管",
-                    false,
-                    true,
-                  ),
-                (error) =>
-                  this._setCommandStatus(
-                    `AI 智能托管开关发送失败：${error?.message || error}`,
-                    true,
-                  ),
-              );
-          }
+          // 与 App 一致：进入/退出智能体模式立即下发开关（仅切开关，
+          // 绝不启动清扫），关闭时设备恢复手动参数模式
+          this._setAgentMode(value === "on");
           return;
         }
         if (param === "passes") {
@@ -1674,11 +1651,13 @@ class T90ModernMapCard extends HTMLElement {
       if (agentMode) {
         // AI 智能托管（实测 App 报文）：setSwitchState {"agentClean":1}
         // 全屋走 Clean(START)；选区走 freeClean 短格式（仅房间 ID），
-        // 两种都不下发手动参数——参数由设备端托管生成
+        // 两种都不下发手动参数——参数由设备端托管生成。
+        // start:true = 启动清扫；不带 start 的 agent_clean 只切开关
+        // （切换开关时用，曾因缺此区分导致一点开启就自动清扫全屋）
         await this._hass.callService("vacuum", "send_command", {
           entity_id: this._config.vacuum_entity,
           command: "agent_clean",
-          params: { enable: true, rooms: wholeHouse ? [] : roomIds },
+          params: { enable: true, start: true, rooms: wholeHouse ? [] : roomIds },
         });
       } else {
         await this._hass.callService("vacuum", "send_command", {
@@ -1714,6 +1693,35 @@ class T90ModernMapCard extends HTMLElement {
       this._cleaning = false;
       this._applySelection();
       this._updateVacuumState();
+    }
+  }
+
+  /** 切换 AI 智能托管：仅下发开关命令（agent_clean 不带 start），
+   * 绝不启动清扫——启动只由「启动」按钮触发（start:true）。 */
+  _setAgentMode(on) {
+    this._params.agent = on;
+    this._syncParamUI();
+    this._applySelection();
+    if (this._hass && this._config?.vacuum_entity) {
+      this._hass
+        .callService("vacuum", "send_command", {
+          entity_id: this._config.vacuum_entity,
+          command: "agent_clean",
+          params: { enable: on },
+        })
+        .then(
+          () =>
+            this._setCommandStatus(
+              on ? "已开启 AI 智能托管" : "已关闭 AI 智能托管",
+              false,
+              true,
+            ),
+          (error) =>
+            this._setCommandStatus(
+              `AI 智能托管开关发送失败：${error?.message || error}`,
+              true,
+            ),
+        );
     }
   }
 

@@ -263,11 +263,15 @@ class EcovacsVacuum(
             # 地面材质托管生成。
             # 注意：getCleanPreference 在该固件上为 20003 rcp not support，
             # 托管开关不是 clean.preference，而是 switchState.agentClean。
+            #
+            # **切开关 ≠ 启动清扫**：params["start"] 显式为 true 才下发
+            # 启动命令，否则只切开关（卡片切换开关时仅同步状态，
+            # 曾因缺此区分导致"一点开启就自动清扫全屋"）。
             enable = params.get("enable", True)
             await self._device.execute_command(
                 CustomCommand("setSwitchState", {"agentClean": 1 if enable else 0})
             )
-            if enable:
+            if enable and params.get("start") is True:
                 rooms = params.get("rooms") or []
                 if rooms:
                     room_ids = ";".join(f"1,{int(r)}" for r in rooms)

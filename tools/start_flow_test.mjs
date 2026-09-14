@@ -54,7 +54,7 @@ function extractMethod(name) {
   throw new Error(`方法 ${name} 花括号不配对`);
 }
 
-const methodNames = ["_cleanSelectedRooms", "_askConfirm", "_resolveConfirm", "_setPendingClean"];
+const methodNames = ["_cleanSelectedRooms", "_askConfirm", "_resolveConfirm", "_setPendingClean", "_setAgentMode"];
 const methods = Object.fromEntries(
   methodNames.map((name) => [name, extractMethod(name)]),
 );
@@ -127,6 +127,7 @@ function makeContext({
     _setCommandStatus: (msg, isError = false, isSuccess = false) =>
       toasts.push({ msg, isError, isSuccess }),
     _applySelection: () => {},
+    _syncParamUI: () => {},
     _updateVacuumState: () => {},
     _syncRunState: () => {
       const s = ctx._vacuumState();
@@ -274,6 +275,7 @@ const check = (label, cond, extra = "") => {
   const sent = calls[0];
   check("AI 托管全屋：使用 agent_clean 命令",
     sent?.data.command === "agent_clean" && sent?.data.params.enable === true);
+  check("AI 托管全屋：start:true（真正触发启动）", sent?.data.params.start === true);
   check("AI 托管全屋：rooms 为空（走 Clean START）",
     Array.isArray(sent?.data.params.rooms) && sent.data.params.rooms.length === 0);
   check("AI 托管全屋：成功提示 + 单次下发", toasts.at(-1)?.isSuccess === true && calls.length === 1);
@@ -290,6 +292,19 @@ const check = (label, cond, extra = "") => {
     && JSON.stringify(sent?.data.params.rooms) === "[9]"
     && sent?.data.params.enable === true);
   check("AI 托管选区：不下发手动参数", sent?.data.params.suction === undefined);
+}
+
+// 13) 切换托管开关：仅切开关（agent_clean 不带 start），绝不启动清扫
+{
+  const { ctx, calls } = makeContext();
+  await ctx._setAgentMode(true);
+  const sent = calls[0];
+  check("切换开关：下发 agent_clean enable:true", sent?.data.command === "agent_clean" && sent?.data.params.enable === true);
+  check("切换开关：不带 start（后端不会启动清扫）", sent?.data.params.start === undefined);
+  check("切换开关：本地状态已更新", ctx._params.agent === true);
+  const { ctx: ctx2, calls: calls2 } = makeContext();
+  await ctx2._setAgentMode(false);
+  check("关闭开关：enable:false", calls2[0]?.data.params.enable === false);
 }
 
 console.log(failed === 0 ? "\n全部用例通过" : `\n${failed} 个用例失败`);
