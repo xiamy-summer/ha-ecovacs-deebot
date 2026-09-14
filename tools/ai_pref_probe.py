@@ -190,6 +190,9 @@ def install_mqtt_tap() -> None:
 
 def classify_response(resp: Any) -> str:
     """把原始应答 dict 归纳成"支持 / 不支持 / 格式异常"一句话结论。"""
+    if resp == {}:
+        # CustomCommand 对非 0 code（如 20003 rcp not support）解析失败会返回 {}
+        return "取不到应答体（多半 = 固件不支持 code 20003，以上方 RAW 应答为准）"
     body = resp.get("body") if isinstance(resp, dict) else None
     if not isinstance(body, dict):
         return f"应答格式异常：{resp!r}"
@@ -240,9 +243,13 @@ async def main() -> None:
     setup_logging()
     logging.info("登录科沃斯中国区服务器（账号: %s）...", args.account)
 
+    # 同一个 device_id 必须贯穿 REST 登录与 MQTT 连接：
+    # broker 校验 client_id 里的 resource 与 loginByItToken 绑定的一致，
+    # 不一致会报 [code:135] Not authorized（ HA 集成就是同一个 ID 所以正常）
+    device_id = md5(str(time.time()))
     async with aiohttp.ClientSession() as session:
         rest_config = create_rest_config(
-            session, device_id=md5(str(time.time())), alpha_2_country=COUNTRY
+            session, device_id=device_id, alpha_2_country=COUNTRY
         )
         authenticator = Authenticator(rest_config, args.account, md5(args.password))
         api_client = ApiClient(authenticator)
@@ -271,7 +278,9 @@ async def main() -> None:
 
         bot = Device(target, authenticator)
 
-        def on_event(event: Any) -> None:
+        # EventBus 回调必须是协程（内部用 create_task 调度），
+        # 写成普通函数会刷 "TypeError: a coroutine was expected, got None"
+        async def on_event(event: Any) -> None:
             logging.info("[EVENT] %s", event)
 
         for evt in WATCH_EVENTS:
@@ -284,7 +293,7 @@ async def main() -> None:
                 logging.info("（本版本库无 %s，跳过订阅）", name)
 
         mqtt = MqttClient(
-            create_mqtt_config(device_id=md5(str(time.time())), country=COUNTRY),
+            create_mqtt_config(device_id=device_id, country=COUNTRY),
             authenticator,
         )
         install_mqtt_tap()
