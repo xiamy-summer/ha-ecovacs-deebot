@@ -34,6 +34,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util import slugify
 
 from . import EcovacsConfigEntry
+from .agent_clean import AgentCleanEvent, GetSwitchState  # noqa: F401  导入即注册 onSwitchState
 from .const import DOMAIN
 from .entity import EcovacsEntity
 from .freeclean import FreeCleanError, assert_valid_value
@@ -127,6 +128,7 @@ class EcovacsVacuum(
 
         self._room_event: RoomsEvent | None = None
         self._maps: dict[str, Map] = {}
+        self._agent_enabled: bool | None = None
 
         if fan_speed := self._capability.fan_speed:
             self._attr_supported_features |= VacuumEntityFeature.FAN_SPEED
@@ -180,8 +182,14 @@ class EcovacsVacuum(
         is lowercase snake_case.
         """
         rooms: dict[str, Any] = {}
+        attributes: dict[str, Any] = {_ATTR_ROOMS: rooms}
+        # AI 智能托管开关状态（None = 未知，卡片按本地状态处理）
+        attributes["agent_clean"] = (
+            None if self._agent_enabled is None
+            else "on" if self._agent_enabled else "off"
+        )
         if self._room_event is None:
-            return rooms
+            return attributes
 
         for room in self._room_event.rooms:
             # convert room name to snake_case to meet the convention
@@ -195,9 +203,7 @@ class EcovacsVacuum(
                 # Convert from int to list
                 rooms[room_name] = [room_values, room.id]
 
-        return {
-            _ATTR_ROOMS: rooms,
-        }
+        return attributes
 
     @override
     async def async_set_fan_speed(self, fan_speed: str, **kwargs: Any) -> None:
@@ -271,6 +277,9 @@ class EcovacsVacuum(
             await self._device.execute_command(
                 CustomCommand("setSwitchState", {"agentClean": 1 if enable else 0})
             )
+            # 乐观同步到实体属性（设备确认后会经 onSwitchState 推送覆盖）
+            self._agent_enabled = bool(enable)
+            self.async_write_ha_state()
             if enable and params.get("start") is True:
                 rooms = params.get("rooms") or []
                 if rooms:

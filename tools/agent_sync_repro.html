@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>agent sync repro</title>
+<script src="/custom_components/ecovacs_deebot/frontend/t90-modern-map-card.js"></script>
+<style>
+  body { margin: 0; font-family: sans-serif; }
+  #host { width: 520px; }
+</style>
+</head>
+<body>
+<div id="host"></div>
+<pre id="log"></pre>
+<script>
+const logEl = document.getElementById("log");
+const lines = [];
+function log(msg) {
+  lines.push(msg);
+  logEl.textContent = lines.join("\n");
+}
+
+// 极简地图 SVG：两个房间
+const SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100">
+  <rect data-room-id="9" x="5" y="5" width="90" height="90" fill="#cde"/>
+  <rect data-room-id="11" x="105" y="5" width="90" height="90" fill="#dec"/>
+</svg>`;
+const svgUrl = URL.createObjectURL(new Blob([SVG], { type: "image/svg+xml" }));
+
+let agentAttr = "on"; // 模拟设备侧：App 已开启智能体模式
+const hass = {
+  states: {
+    "vacuum.t90": { state: "docked", attributes: { get agent_clean() { return agentAttr; } } },
+    "image.t90_map": {
+      state: "idle",
+      attributes: { entity_picture: svgUrl, rooms: [{ id: 9, name: "房间9" }, { id: 11, name: "房间11" }] },
+    },
+  },
+  hassUrl: (p) => p,
+  callService: async () => {},
+  connection: { subscribeMessage: async () => () => {} },
+};
+
+const agentOn = (el) => {
+  const seg = el.shadowRoot?.querySelector('.seg-row[data-param="agent"] .seg[data-value="on"]');
+  return seg?.classList.contains("active") === true;
+};
+const manualHidden = (el) => {
+  const block = el.shadowRoot?.querySelector('.param-block:not(.agent-block)');
+  return block ? getComputedStyle(block).display === "none" : false;
+};
+
+(async () => {
+  const el = document.createElement("t90-modern-map-card");
+  el.setConfig({ title: "T90 地图", image_entity: "image.t90_map", vacuum_entity: "vacuum.t90", refresh_interval: 10 });
+  document.getElementById("host").appendChild(el);
+  el.hass = hass; // 首帧即带 agent_clean=on（模拟刷新页面时设备已开启）
+
+  const t0 = Date.now();
+  const results = [];
+  const assert = (label, ok) => { results.push(ok); log((ok ? "PASS  " : "FAIL  ") + label); };
+
+  // 等两帧 hass 推送
+  await new Promise((r) => setTimeout(r, 150));
+  el.hass = hass;
+  await new Promise((r) => setTimeout(r, 150));
+
+  assert("刷新加载：设备 on → 卡片渲染为「开启」", agentOn(el));
+  assert("刷新加载：开启时手动参数区隐藏", manualHidden(el));
+
+  // 模拟在 App 关闭托管 → 设备推送 agent_clean=off
+  agentAttr = "off";
+  el.hass = hass;
+  await new Promise((r) => setTimeout(r, 150));
+  assert("App 关闭托管：卡片同步为「关闭」", !agentOn(el));
+  assert("App 关闭托管：手动参数区恢复显示", !manualHidden(el));
+
+  // 模拟再次开启
+  agentAttr = "on";
+  el.hass = hass;
+  await new Promise((r) => setTimeout(r, 150));
+  assert("App 再开启：卡片同步为「开启」", agentOn(el));
+
+  log(`\n结果：${results.filter(Boolean).length}/${results.length} 通过`);
+})();
+</script>
+</body>
+</html>

@@ -1703,6 +1703,7 @@ class T90ModernMapCard extends HTMLElement {
    * 绝不启动清扫——启动只由「启动」按钮触发（start:true）。 */
   _setAgentMode(on) {
     this._params.agent = on;
+    this._agentLocalAt = Date.now(); // 5s 内不接受设备侧回写，防在途命令被旧值覆盖
     this._syncParamUI();
     this._applySelection();
     if (this._hass && this._config?.vacuum_entity) {
@@ -1872,7 +1873,26 @@ class T90ModernMapCard extends HTMLElement {
         this._extraStatusElement.append(badge);
       }
     }
+    this._syncAgentState();
     this._syncRunState();
+  }
+
+  /** 与设备侧同步 AI 智能托管开关状态。
+   *
+   * vacuum 实体属性 agent_clean（on/off/null）由后端维护：
+   * 设备 onSwitchState 推送 + getSwitchState 查询 + 卡片切换的乐观回写。
+   * 这样 App 内开启托管后，卡片刷新即显示开启（此前恒为关闭）。
+   * 本地切换后 5 秒内不回写，避免命令在途时被旧属性值翻转 UI。
+   */
+  _syncAgentState() {
+    const raw = this._hass?.states[this._config.vacuum_entity]?.attributes?.agent_clean;
+    if (raw !== "on" && raw !== "off") return;
+    if (Date.now() - (this._agentLocalAt || 0) < 5000) return;
+    const enabled = raw === "on";
+    if (this._params.agent !== enabled) {
+      this._params.agent = enabled;
+      this._syncParamUI();
+    }
   }
 
   /**
