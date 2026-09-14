@@ -551,6 +551,10 @@ class T90ModernMapCard extends HTMLElement {
     this._selectionLocked = false;
     this._toastTimer = null;
     this._cleanGuard = null;
+    // 乐观锁定：命令已发出但实体状态尚未变为 cleaning/paused 的窗口期，
+    // 防止状态上报延迟（数秒）期间重复点击启动（与科沃斯 App 行为一致）
+    this._pendingClean = false;
+    this._pendingGuard = null;
     this._confirmResolve = null;
     this._lastRefresh = 0;
     this._timer = null;
@@ -1507,7 +1511,7 @@ class T90ModernMapCard extends HTMLElement {
     // 启动按钮：未选房间 = 全屋清扫；已选 = 只清扫所选
     const wholeHouse = this._selectedRooms.size === 0;
     this._startButton.disabled =
-      this._cleaning || this._stopping ||
+      this._cleaning || this._stopping || this._pendingClean ||
       (wholeHouse && this._availableRooms.size === 0 && this._roomsFromDevice().length === 0);
     const btnText = this._startButton.querySelector(".start-text");
     const btnScope = this._startButton.querySelector(".start-scope");
@@ -1550,8 +1554,13 @@ class T90ModernMapCard extends HTMLElement {
     if (!this._hass) return;
     // 任何一次点击都必须有可见反馈：之前这里多处静默 return，
     // 表现就是"点了启动完全没有反应"，无从判断卡在哪一步。
-    if (this._cleaning || this._stopping) {
-      this._setCommandStatus("上一条清扫命令仍在发送中，请稍候…", true);
+    if (this._cleaning || this._stopping || this._pendingClean) {
+      this._setCommandStatus(
+        this._pendingClean
+          ? "清扫命令已发送，等待机器人开始清扫…"
+          : "上一条清扫命令仍在发送中，请稍候…",
+        true,
+      );
       return;
     }
     if (this._selectionLocked) {
@@ -1612,9 +1621,13 @@ class T90ModernMapCard extends HTMLElement {
         true,
       );
       this._selectedRooms.clear();
+      // 乐观锁定：状态上报有延迟，发送成功后立即锁定，
+      // 直到实体状态变为 cleaning/paused（_syncRunState）或超时
+      this._setPendingClean(true);
     } catch (error) {
       const message = error?.message || String(error);
       this._setCommandStatus(`清扫命令发送失败：${message}`, true);
+      this._setPendingClean(false);
     } finally {
       if (this._cleanGuard) {
         window.clearTimeout(this._cleanGuard);
@@ -1773,6 +1786,32 @@ class T90ModernMapCard extends HTMLElement {
     this._syncRunState();
   }
 
+  /**
+   * 乐观锁定开关：命令发送成功 → 开启；实体状态确认清扫/暂停 → 关闭。
+   * 90 秒兜底超时自动解除（命令被设备接受但机器人始终未启动的场景，
+   * 如故障/找不到地图），避免按钮永久锁死。
+   */
+  _setPendingClean(on) {
+    this._pendingClean = on;
+    if (this._pendingGuard) {
+      window.clearTimeout(this._pendingGuard);
+      this._pendingGuard = null;
+    }
+    if (on) {
+      this._pendingGuard = window.setTimeout(() => {
+        this._pendingGuard = null;
+        if (!this._pendingClean) return;
+        this._pendingClean = false;
+        this._setCommandStatus(
+          "已等待较久机器人仍未开始清扫，已恢复操作；请检查设备状态后重试",
+          true,
+        );
+        this._syncRunState();
+      }, 90000);
+    }
+    this._syncRunState();
+  }
+
   /** 清扫状态联动（与科沃斯 App 一致）：
    *
    * - 清扫中/暂停：锁定地图选房与启动按钮，主按钮区切换为
@@ -1781,7 +1820,12 @@ class T90ModernMapCard extends HTMLElement {
    */
   _syncRunState() {
     const state = this._vacuumState();
-    const active = state === "cleaning" || state === "paused";
+    // 实体状态已确认清扫/暂停：解除乐观锁定，交给真实状态接管
+    if (this._pendingClean && (state === "cleaning" || state === "paused")) {
+      this._setPendingClean(false);
+    }
+    const active =
+      state === "cleaning" || state === "paused" || this._pendingClean;
     this._selectionLocked = active;
     this._viewport?.classList.toggle("locked", active);
     if (active && this._selectedRooms.size) {
@@ -1817,10 +1861,14 @@ class T90ModernMapCard extends HTMLElement {
       dockBtn.disabled = ["docked", "returning", "unavailable", "unknown"].includes(state);
     }
     if (this._pauseButton) {
-      this._pauseButton.disabled = this._stopping || this._cleaning;
+      // 乐观锁定且状态尚未确认为清扫/暂停时，暂停/结束暂不可按：
+      // 机器人还没真正开始，此时下发暂停会失败
+      const pendingWait = this._pendingClean && !["cleaning", "paused"].includes(state);
+      this._pauseButton.disabled = this._stopping || this._cleaning || pendingWait;
     }
     if (this._endButton) {
-      this._endButton.disabled = this._stopping || this._cleaning;
+      const pendingWait = this._pendingClean && !["cleaning", "paused"].includes(state);
+      this._endButton.disabled = this._stopping || this._cleaning || pendingWait;
     }
   }
 }

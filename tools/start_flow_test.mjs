@@ -54,7 +54,7 @@ function extractMethod(name) {
   throw new Error(`方法 ${name} 花括号不配对`);
 }
 
-const methodNames = ["_cleanSelectedRooms", "_askConfirm", "_resolveConfirm"];
+const methodNames = ["_cleanSelectedRooms", "_askConfirm", "_resolveConfirm", "_setPendingClean"];
 const methods = Object.fromEntries(
   methodNames.map((name) => [name, extractMethod(name)]),
 );
@@ -80,10 +80,13 @@ function makeContext({
   const toasts = [];
   const calls = [];
   let release;
+  let currentState = state; // 可变：模拟实体状态上报延迟/更新
   const ctx = {
     _hass: {
       states: {
-        "vacuum.t90": { state },
+        get "vacuum.t90"() {
+          return { state: currentState };
+        },
         "image.t90_map": { attributes: { rooms } },
       },
       callService: async (domain, service, data) => {
@@ -96,6 +99,8 @@ function makeContext({
     _selectedRooms: new Map(selected.map((id) => [id, `房间${id}`])),
     _cleaning: false,
     _stopping: false,
+    _pendingClean: false,
+    _pendingGuard: null,
     _selectionLocked: state === "cleaning" || state === "paused",
     _cleanGuard: null,
     _confirmResolve: null,
@@ -110,7 +115,10 @@ function makeContext({
       style: { display: "none" },
       querySelector: () => ({ textContent: "" }),
     },
-    _vacuumState: () => state,
+    _vacuumState: () => currentState,
+    _setState: (s) => {
+      currentState = s;
+    },
     _orderedRoomIds: () => [...rooms],
     _cleanParams: () => ({ suction: "max" }),
     _describeParams: (p) => `吸力=${p.suction}`,
@@ -119,7 +127,12 @@ function makeContext({
     _applySelection: () => {},
     _updateVacuumState: () => {},
     _syncRunState: () => {
-      ctx._selectionLocked = ctx._vacuumState() === "cleaning" || ctx._vacuumState() === "paused";
+      const s = ctx._vacuumState();
+      // 与真实实现一致：状态确认清扫/暂停时解除乐观锁定
+      if (ctx._pendingClean && (s === "cleaning" || s === "paused")) {
+        ctx._setPendingClean(false);
+      }
+      ctx._selectionLocked = s === "cleaning" || s === "paused" || ctx._pendingClean;
     },
     _refreshMap: () => {
       ctx._refreshed += 1;
@@ -214,6 +227,42 @@ const check = (label, cond, extra = "") => {
   check("兜底触发：解锁并提示超时", ctx._cleaning === false && toasts.at(-1)?.msg.includes("超时"));
   releaseHang();
   await promise;
+}
+
+// 8) 发送成功后的乐观锁定：状态上报延迟期间不可重复启动
+{
+  timers.length = 0;
+  const { ctx, calls } = makeContext();
+  await click(ctx, true);
+  check("发送成功后进入乐观锁定", ctx._pendingClean === true);
+  check("乐观锁定期间选区已锁定", ctx._selectionLocked === true);
+  const first = calls.length;
+  await click(ctx, true);
+  check("锁定期间再次点击：不下发第二条命令", calls.length === first);
+}
+
+// 9) 实体状态确认为清扫：乐观锁定自动解除，交给真实状态接管
+{
+  timers.length = 0;
+  const { ctx } = makeContext();
+  await click(ctx, true);
+  check("前置：处于乐观锁定", ctx._pendingClean === true);
+  ctx._setState("cleaning");
+  ctx._syncRunState();
+  check("状态变为清扫中：乐观锁定解除", ctx._pendingClean === false);
+  check("状态变为清扫中：选区仍锁定", ctx._selectionLocked === true);
+}
+
+// 10) 乐观锁定 90 秒兜底：机器人始终未开始时自动解锁并提示
+{
+  timers.length = 0;
+  const { ctx, toasts } = makeContext();
+  await click(ctx, true);
+  const guard = timers.find((t) => t.ms === 90000);
+  check("设置了 90s 乐观锁定兜底计时器", Boolean(guard));
+  guard.fn();
+  check("兜底触发：乐观锁定解除", ctx._pendingClean === false);
+  check("兜底触发：给出超时提示", toasts.at(-1)?.msg.includes("仍未开始清扫"));
 }
 
 console.log(failed === 0 ? "\n全部用例通过" : `\n${failed} 个用例失败`);
