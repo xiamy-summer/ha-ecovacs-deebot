@@ -445,7 +445,7 @@ class T90ModernMapCard extends HTMLElement {
         }
 
         /* ---------- 地图容器 ---------- */
-        .map-wrap { position: relative; margin: 0 12px; }
+        .map-wrap { position: relative; margin: 14px 12px 0; }
         .viewport {
           border-radius: 14px; overflow: auto;
           background:

@@ -13,6 +13,12 @@ from deebot_client.events import (
     StateEvent,
 )
 from deebot_client.events.map import Map
+from deebot_client.commands.json.clean_count import SetCleanCount
+from deebot_client.commands.json.custom import CustomCommand
+from deebot_client.commands.json.fan_speed import SetFanSpeed
+from deebot_client.commands.json.water_info import SetWaterInfo
+from deebot_client.commands.json.work_mode import SetWorkMode
+from deebot_client.events import FanSpeedLevel, WorkMode
 from deebot_client.models import CleanAction, CleanMode, State
 
 from homeassistant.components.vacuum import (
@@ -30,12 +36,36 @@ from homeassistant.util import slugify
 from . import EcovacsConfigEntry
 from .const import DOMAIN
 from .entity import EcovacsEntity
-from .freeclean import FreeCleanError, assert_valid_value, build_room_segment
+from .freeclean import FreeCleanError, assert_valid_value
 from .t90_map import GetQuickCommandT90, T90FreeCleanV2, get_scenarios
 from .util import get_name_key
 
 _LOGGER = logging.getLogger(__name__)
 _SEGMENTS_SEPARATOR = "_"
+
+# spot_area 扩展参数 → 全局设置命令的取值映射。
+# 吸力：FanSpeedLevel（1000=安静 0=标准 1=强力 2=强力+）。
+_SUCTION_TO_FAN_SPEED = {
+    "quiet": FanSpeedLevel.QUIET,
+    "normal": FanSpeedLevel.NORMAL,
+    "standard": FanSpeedLevel.NORMAL,
+    "max": FanSpeedLevel.MAX,
+    "strong": FanSpeedLevel.MAX,
+    "max_plus": FanSpeedLevel.MAX_PLUS,
+}
+# 模式：WorkMode（0=边扫边拖 1=扫地 2=只拖 3=先扫后拖）。
+_MOP_TYPE_TO_WORK_MODE = {
+    "vacuum": WorkMode.VACUUM,
+    "mop": WorkMode.MOP,
+    "vacuum_and_mop": WorkMode.VACUUM_AND_MOP,
+    "mop_after_vacuum": WorkMode.MOP_AFTER_VACUUM,
+}
+# 清洁效率 → setCustomAreaMode sweepMode（T30 社区逆向：0=标准 1=深度 2=快速）。
+_EFFICIENCY_TO_SWEEP_MODE = {
+    "standard": 0,
+    "deep": 1,
+    "fast": 2,
+}
 
 ATTR_ERROR = "error"
 
@@ -240,53 +270,53 @@ class EcovacsVacuum(
                 )
 
             if command == "spot_area":
-                # 可选扩展参数：吸力/水量/拖地模式/清洁效率 → 9 字段 freeClean 扩展格式。
-                # rooms 元素支持两种形式：
-                #   - 数字（房间 ID）
-                #   - 字典 {id, suction?, mop_type?, water?, passes?, efficiency?}
+                # 可选扩展参数：吸力/水量/拖地模式/清洁效率/次数。
+                #
+                # 1.103.0 固件实测（jkzzec）：freeClean 9 字段扩展格式下发成功
+                # （code 0），但固件任务队列 clean_para 记录的全是全局默认值——
+                # 新固件已不解析 9 字段的参数位（仅房间 ID 有效）。
+                # 因此对齐 App 行为：先发全局设置命令（setSpeed/setWorkMode/
+                # setWaterInfo/setCustomAreaMode/setCleanCount），再发
+                # freeClean 短格式（仅房间 ID）。
                 suction = params.get("suction")
                 water = params.get("water")
                 mop_type = params.get("mop_type")
                 efficiency = params.get("efficiency")
-                passes = params.get("passes", 1)
-                room_specs: list[dict[str, Any]] = []
-                per_room = False
+                passes = int(params.get("passes", 1) or 1)
+
+                room_ids: list[int] = []
                 for item in params["rooms"]:
-                    if isinstance(item, dict):
-                        per_room = True
-                        room_specs.append(item)
-                    else:
-                        room_specs.append({"id": item})
-                if (
-                    per_room
-                    or suction
-                    or water is not None
-                    or mop_type
-                    or efficiency
-                    or (passes or 1) != 1
-                ):
-                    default_suction = suction or self._attr_fan_speed or "quiet"
-                    default_mop = mop_type or "vacuum"
-                    try:
-                        value = ";".join(
-                            build_room_segment(
-                                spec["id"],
-                                passes=spec.get("passes", passes),
-                                suction=spec.get("suction") or default_suction,
-                                workmode=spec.get("mop_type") or default_mop,
-                                water=spec.get("water", water),
-                                efficiency=spec.get("efficiency") or efficiency,
-                            )
-                            for spec in room_specs
+                    # 字典形式（每房间独立参数）已不支持——新固件参数走全局
+                    # 设置命令，无任务级参数位；仅提取 id。
+                    room_ids.append(
+                        int(item["id"]) if isinstance(item, dict) else int(item)
+                    )
+
+                commands: list[Any] = []
+                if suction:
+                    commands.append(SetFanSpeed(_SUCTION_TO_FAN_SPEED[suction]))
+                if mop_type:
+                    commands.append(SetWorkMode(_MOP_TYPE_TO_WORK_MODE[mop_type]))
+                if water is not None:
+                    commands.append(SetWaterInfo(custom_amount=int(water)))
+                if efficiency:
+                    # 清洁效率（快速/标准/深度）：协议名 setCustomAreaMode，
+                    # sweepMode 取值来自 T30 社区逆向（0=标准 1=深度 2=快速），
+                    # deebot_client 未建模，用 CustomCommand 下发。
+                    commands.append(
+                        CustomCommand(
+                            "setCustomAreaMode",
+                            {"sweepMode": _EFFICIENCY_TO_SWEEP_MODE[efficiency]},
                         )
-                    except FreeCleanError as error:
-                        raise ServiceValidationError(
-                            translation_domain=DOMAIN,
-                            translation_key="vacuum_freeclean_invalid",
-                            translation_placeholders={"error": str(error)},
-                        ) from error
-                    await self._device.execute_command(T90FreeCleanV2(value))
-                    return
+                    )
+                if passes != 1:
+                    commands.append(SetCleanCount(passes))
+                commands.append(
+                    T90FreeCleanV2(";".join(f"1,{rid}" for rid in room_ids))
+                )
+                for cmd in commands:
+                    await self._device.execute_command(cmd)
+                return
                 await self._device.execute_command(
                     self._capability.clean.action.area(
                         CleanMode.SPOT_AREA,
