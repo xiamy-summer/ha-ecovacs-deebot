@@ -3,9 +3,13 @@
  * 目的：验证 insertBefore/矩形命中/落点计算是否真能把行排到预期位置。
  */
 import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const FILE =
-  "/Users/summer/WorkBuddy/2026-09-12-12-40-20/ecovacs-deebot-ha/custom_components/ecovacs_deebot/frontend/t90-modern-map-card.js";
+const FILE = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "../custom_components/ecovacs_deebot/frontend/t90-modern-map-card.js",
+);
 const src = readFileSync(FILE, "utf8");
 
 const startIdx = src.indexOf("const liveList = () =>");
