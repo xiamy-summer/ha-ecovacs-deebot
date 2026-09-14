@@ -28,8 +28,19 @@ class T90ModernMapCardEditor extends HTMLElement {
     // 首次拿到 hass 或配置变化时重建；房间列表尚未加载成功时补拉。
     if (first || !this._rendered) {
       this._render();
-    } else if (!this._roomsForOrder && this._config?.image_entity) {
-      this._loadRoomsForOrder();
+    } else if (this._config?.image_entity) {
+      // 设备房间表（集成订阅 RoomsEvent 后写在地图实体的 rooms 属性上）可能
+      // 晚于首次渲染才到达；此前若只能从 SVG 解析，会缺少没有路径的房间，
+      // 顺序也未必与 App 一致，因此拿到设备房间表后自动升级一次。
+      const deviceRooms = this._roomsFromDevice();
+      if (deviceRooms.length && (this._roomsFromSvg || !this._roomsForOrder)) {
+        this._roomsForOrder = deviceRooms;
+        this._roomsFromSvg = false;
+        this._renderOrderList();
+        this._renderOrderSource();
+      } else if (!this._roomsForOrder) {
+        this._loadRoomsForOrder();
+      }
     }
   }
 
@@ -41,6 +52,12 @@ class T90ModernMapCardEditor extends HTMLElement {
 
   _render() {
     if (!this._hass || this._rendered) return;
+    if (this._dragActive) {
+      // 拖拽中重建 shadowRoot 会销毁正在拖的行、打断排序手势，
+      // 记为待渲染，手势结束后补一次。
+      this._renderPending = true;
+      return;
+    }
     this.shadowRoot.innerHTML = `
       <style>
         .form { display: grid; gap: 16px; padding: 8px 0; }
@@ -53,12 +70,18 @@ class T90ModernMapCardEditor extends HTMLElement {
         .toggles label {
           display: flex; align-items: center; gap: 10px; font-size: 14px; cursor: pointer;
         }
-        .order-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+        .order-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
         .order-title { font-weight: 600; font-size: 14px; }
+        .order-actions { display: inline-flex; align-items: center; gap: 6px; }
         .order-load {
           border: 0; border-radius: 6px; padding: 6px 12px; cursor: pointer;
           background: var(--primary-color); color: var(--text-primary-color, #fff); font-size: 13px;
         }
+        .order-reset {
+          border: 1px solid var(--divider-color); border-radius: 6px; padding: 6px 12px;
+          cursor: pointer; background: transparent; color: var(--primary-text-color); font-size: 13px;
+        }
+        .order-source { color: var(--secondary-text-color); font-size: 12px; margin-bottom: 6px; }
         .order-list { display: grid; gap: 6px; }
         .order-row {
           display: flex; align-items: center; gap: 6px; touch-action: pan-y;
@@ -102,13 +125,17 @@ class T90ModernMapCardEditor extends HTMLElement {
         </div>
         <div class="order-head">
           <span class="order-title">全屋清扫顺序</span>
-          <button class="order-load">重新载入列表</button>
+          <span class="order-actions">
+            <button class="order-reset">恢复设备顺序</button>
+            <button class="order-load">重新载入列表</button>
+          </span>
         </div>
         <div class="order-section">
+          <div class="order-source"></div>
           <div class="order-list"></div>
           <div class="order-empty" style="display:none"></div>
           <div class="hint" style="margin-top:8px">
-            未在地图上选择区域时，启动按钮按此顺序清扫全屋。按住房间左侧的 ⠿ 手柄拖动可调整顺序（也可用 ↑↓）。
+            未在地图上选择区域时，启动按钮按此顺序清扫全屋。按住房间左侧的 ⠿ 手柄拖动可调整顺序（PC 上可直接拖整行，也可用 ↑↓）。
             排序保存在仪表盘配置中，PC/APP 同步生效。
           </div>
         </div>
@@ -170,7 +197,13 @@ class T90ModernMapCardEditor extends HTMLElement {
     }
     this.shadowRoot.querySelector(".order-load").addEventListener("click", () => {
       this._roomsForOrder = null; // 强制重新拉取
+      this._roomsFromSvg = true;
       this._loadRoomsForOrder();
+    });
+    this.shadowRoot.querySelector(".order-reset").addEventListener("click", () => {
+      // 清空自定义顺序 → 回落到设备（固件/App）的房间顺序
+      this._updateConfig("room_order", []);
+      this._renderOrderList();
     });
     // 显示开关
     const toggleMap = [
@@ -190,6 +223,7 @@ class T90ModernMapCardEditor extends HTMLElement {
     // 房间列表已缓存时直接渲染，无需重新载入
     if (this._roomsForOrder) {
       this._renderOrderList();
+      this._renderOrderSource();
     } else if (this._config.image_entity) {
       this._loadRoomsForOrder();
     }
@@ -206,10 +240,47 @@ class T90ModernMapCardEditor extends HTMLElement {
     }
   }
 
+  /** 从地图实体的 rooms 属性读取设备端房间表（顺序 = 固件/App 的房间顺序）。 */
+  _roomsFromDevice() {
+    const attrs = this._hass?.states?.[this._config?.image_entity]?.attributes || {};
+    const raw = attrs.rooms;
+    if (!Array.isArray(raw)) return [];
+    const out = [];
+    const seen = new Set();
+    for (const item of raw) {
+      const id = Number(typeof item === "object" && item !== null ? item.id : item);
+      if (!Number.isFinite(id) || seen.has(id)) continue;
+      seen.add(id);
+      const name =
+        (typeof item === "object" && item !== null ? String(item.name || "") : "") ||
+        `区域 ${id}`;
+      out.push({ id, name });
+    }
+    return out;
+  }
+
+  _renderOrderSource() {
+    const el = this.shadowRoot.querySelector(".order-source");
+    if (!el) return;
+    el.textContent = this._roomsFromSvg
+      ? "房间表来自地图 SVG（可能缺少未绘制路径的房间，建议重启集成后重载）"
+      : "顺序来源：设备房间表（与 App 的房间列表一致），可拖动调整";
+  }
+
   async _loadRoomsForOrderInner() {
     const empty = this.shadowRoot.querySelector(".order-empty");
     const list = this.shadowRoot.querySelector(".order-list");
     if (!empty || !list) return;
+    // 首选设备房间表：包含全部房间，顺序即固件/App 的列表顺序。
+    const deviceRooms = this._roomsFromDevice();
+    if (deviceRooms.length) {
+      this._roomsForOrder = deviceRooms;
+      this._roomsFromSvg = false;
+      empty.style.display = "none";
+      this._renderOrderList();
+      this._renderOrderSource();
+      return;
+    }
     const entity = this._hass?.states[this._config.image_entity];
     const picture = entity?.attributes?.entity_picture;
     if (!picture) {
@@ -238,12 +309,15 @@ class T90ModernMapCardEditor extends HTMLElement {
         }
       });
       this._roomsForOrder = [...rooms.values()];
+      this._roomsFromSvg = true;
       if (!this._roomsForOrder.length) {
         empty.textContent = "地图中未找到房间信息（请确认机器人已保存过地图）";
+        this._renderOrderSource();
         return;
       }
       empty.style.display = "none";
       this._renderOrderList();
+      this._renderOrderSource();
     } catch (error) {
       empty.textContent = `读取失败：${error.message}`;
     }
@@ -252,6 +326,7 @@ class T90ModernMapCardEditor extends HTMLElement {
   _renderOrderList() {
     const list = this.shadowRoot.querySelector(".order-list");
     if (!list || !this._roomsForOrder) return;
+    if (this._dragActive) return; // 拖拽中不重建列表（会销毁正在拖的行）
     const known = this._roomsForOrder;
     const configured = (this._config.room_order || []).map(Number);
     let order = configured.filter((id) => known.some((room) => room.id === id));
@@ -289,61 +364,120 @@ class T90ModernMapCardEditor extends HTMLElement {
         this._renderOrderList();
       });
       row.append(handle, name, up, down);
-      // 拖拽排序：鼠标可在行任意处拖动，触屏仅通过 ⠿ 手柄（避免与面板滚动冲突）。
-      // 命中判断用各行的 getBoundingClientRect，不依赖 elementFromPoint——
-      // 后者无法可靠穿透 HA 编辑器多层 shadow DOM。
+      // ---------- 拖拽排序 ----------
+      // 三个关键点（前两个是此前拖不动的根因）：
+      //  1) 监听挂在 window 捕获阶段，绝不用 setPointerCapture。拖动过程中
+      //     insertBefore 会把行元素从文档摘下来再插回去，元素一旦脱离文档，
+      //     浏览器会立刻自动释放指针捕获，后续 pointermove 再也收不到——
+      //     表现为"拖一下卡住 / 完全拖不动"。
+      //  2) 命中判断用各行 getBoundingClientRect 计算，不用 elementFromPoint
+      //     （无法可靠穿透 HA 编辑器的多层 shadow DOM）。
+      //  3) 触屏只允许从 ⠿ 手柄起拖（行本体保留 pan-y，配置面板仍可滚动）；
+      //     PC 上整行都可以拖。
+      const liveList = () => this.shadowRoot.querySelector(".order-list") || list;
       const startDrag = (startEvent) => {
-        if (startEvent.button !== 0) return;
-        const captureEl = startEvent.currentTarget;
+        if (startEvent.pointerType === "mouse" && startEvent.button !== 0) return;
+        if (this._dragActive) return;
         startEvent.preventDefault();
-        captureEl.setPointerCapture(startEvent.pointerId);
+        startEvent.stopPropagation();
+        this._dragActive = true;
         row.classList.add("dragging");
+        const orderAtStart = [...liveList().querySelectorAll(".order-row")].map((el) =>
+          Number(el.dataset.roomId),
+        );
+
+        const place = (target, before) => {
+          const parent = liveList();
+          if (!parent) return;
+          if (before) {
+            if (target !== row) parent.insertBefore(row, target);
+            return;
+          }
+          // 用 nextElementSibling（列表里只有 .order-row 元素，
+          // 避免被空白文本节点干扰）
+          if (target.nextElementSibling !== row) {
+            parent.insertBefore(row, target.nextElementSibling);
+          }
+        };
+
         const onMove = (moveEvent) => {
           const y = moveEvent.clientY;
-          const rows = [...list.querySelectorAll(".order-row")];
-          if (!rows.length) return;
-          let target = null;
-          let insertBefore = false;
+          const rows = [...liveList().querySelectorAll(".order-row")];
+          if (rows.length < 2) return;
+          const firstRect = rows[0].getBoundingClientRect();
+          const lastRect = rows[rows.length - 1].getBoundingClientRect();
+          if (y < firstRect.top) {
+            if (rows[0] !== row) place(rows[0], true);
+            return;
+          }
+          if (y > lastRect.bottom) {
+            if (rows[rows.length - 1] !== row) {
+              const parent = liveList();
+              if (parent) parent.append(row);
+            }
+            return;
+          }
+          // 命中行矩形则用命中行；落在行间 6px 间隙时退化到"最近一行"，
+          // 避免指针在缝里移动时毫无反应（会被误认为拖不动）。
+          let best = null;
+          let before = false;
+          let bestDistance = Infinity;
           for (const candidate of rows) {
             if (candidate === row) continue;
             const rect = candidate.getBoundingClientRect();
+            const center = rect.top + rect.height / 2;
             if (y >= rect.top && y <= rect.bottom) {
-              target = candidate;
-              insertBefore = y < rect.top + rect.height / 2;
+              best = candidate;
+              before = y < center;
               break;
             }
+            const distance = Math.abs(y - center);
+            if (distance < bestDistance) {
+              bestDistance = distance;
+              best = candidate;
+              before = y < center;
+            }
           }
-          if (!target) {
-            // 拖到列表上/下边界之外：移到头部或尾部
-            const firstRect = rows[0].getBoundingClientRect();
-            const lastRect = rows[rows.length - 1].getBoundingClientRect();
-            if (y < firstRect.top && row !== rows[0]) list.insertBefore(row, rows[0]);
-            else if (y > lastRect.bottom && row !== rows[rows.length - 1]) list.append(row);
-            return;
-          }
-          list.insertBefore(row, insertBefore ? target : target.nextSibling);
+          if (best) place(best, before);
         };
+
         const onUp = () => {
+          window.removeEventListener("pointermove", onMove, true);
+          window.removeEventListener("pointerup", onUp, true);
+          window.removeEventListener("pointercancel", onUp, true);
+          this._dragActive = false;
           row.classList.remove("dragging");
-          captureEl.removeEventListener("pointermove", onMove);
-          captureEl.removeEventListener("pointerup", onUp);
-          captureEl.removeEventListener("pointercancel", onUp);
-          const newOrder = [...list.querySelectorAll(".order-row")]
-            .map((el) => Number(el.dataset.roomId));
-          if (newOrder.join(",") !== (this._config.room_order || []).map(Number).join(",")) {
+          const newOrder = [...liveList().querySelectorAll(".order-row")].map((el) =>
+            Number(el.dataset.roomId),
+          );
+          // 与"拖动开始时的实际顺序"比较：只是点一下没拖动就不写配置，
+          // 否则会把设备默认顺序固化成一份自定义顺序（"恢复设备顺序"也就失效了）。
+          if (newOrder.join(",") !== orderAtStart.join(",")) {
             this._updateConfig("room_order", newOrder);
+          }
+          if (this._renderPending) {
+            // 拖拽期间有被推迟的整树渲染，现在补上（内部会重建列表）
+            this._renderPending = false;
+            this._rendered = false;
+            this._render();
+            return;
           }
           this._renderOrderList();
         };
-        // setPointerCapture 在 captureEl 上，move/up 都会派发给它
-        captureEl.addEventListener("pointermove", onMove);
-        captureEl.addEventListener("pointerup", onUp);
-        captureEl.addEventListener("pointercancel", onUp);
+
+        window.addEventListener("pointermove", onMove, true);
+        window.addEventListener("pointerup", onUp, true);
+        window.addEventListener("pointercancel", onUp, true);
       };
-      row.addEventListener("pointerdown", (event) => {
-        if (event.pointerType === "mouse") startDrag(event);
-      });
+
+      // 触屏/手写笔：只能从手柄起拖
       handle.addEventListener("pointerdown", startDrag);
+      // 鼠标：整行可拖（避开手柄与 ↑↓ 按钮，防止重复启动）
+      row.addEventListener("pointerdown", (event) => {
+        if (event.pointerType !== "mouse") return;
+        if (event.target.closest(".drag-handle, button")) return;
+        startDrag(event);
+      });
       list.append(row);
     });
   }
@@ -1248,12 +1382,35 @@ class T90ModernMapCard extends HTMLElement {
     return `t90-modern-room-order:${this._config?.vacuum_entity || "default"}`;
   }
 
+  /** 设备端房间表（地图实体的 rooms 属性），顺序即固件/App 的房间列表顺序。 */
+  _roomsFromDevice() {
+    const attrs = this._hass?.states?.[this._config?.image_entity]?.attributes || {};
+    const raw = attrs.rooms;
+    if (!Array.isArray(raw)) return [];
+    const out = [];
+    const seen = new Set();
+    for (const item of raw) {
+      const id = Number(typeof item === "object" && item !== null ? item.id : item);
+      if (!Number.isFinite(id) || seen.has(id)) continue;
+      seen.add(id);
+      out.push(id);
+    }
+    return out;
+  }
+
   _orderedRoomIds() {
+    // 全屋清扫的"全屋"以设备房间表为准：SVG 里没有绘制路径的房间
+    // （如未命名的区域）也必须参与清扫，否则会漏扫。
+    const device = this._roomsFromDevice();
     const available = [...this._availableRooms.keys()];
-    // 优先级：编辑器配置 room_order > 地图自然顺序
-    const configured = (this._config?.room_order || []).map(Number);
-    let order = configured.filter((id) => available.includes(id));
+    const pool = device.length ? [...device] : [...available];
     for (const id of available) {
+      if (!pool.includes(id)) pool.push(id);
+    }
+    // 优先级：编辑器配置 room_order > 设备房间顺序
+    const configured = (this._config?.room_order || []).map(Number);
+    const order = configured.filter((id) => pool.includes(id));
+    for (const id of pool) {
       if (!order.includes(id)) order.push(id);
     }
     this._roomOrder = order;
@@ -1304,7 +1461,7 @@ class T90ModernMapCard extends HTMLElement {
     const wholeHouse = this._selectedRooms.size === 0;
     this._startButton.disabled =
       this._cleaning || this._stopping ||
-      (wholeHouse && this._availableRooms.size === 0);
+      (wholeHouse && this._availableRooms.size === 0 && this._roomsFromDevice().length === 0);
     const btnText = this._startButton.querySelector(".start-text");
     const btnScope = this._startButton.querySelector(".start-scope");
     if (!this._cleaning && btnText) btnText.textContent = "启 动";

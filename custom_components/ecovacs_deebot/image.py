@@ -4,6 +4,7 @@ from typing import cast, override
 
 from deebot_client.capabilities import CapabilityMap
 from deebot_client.device import Device
+from deebot_client.events import RoomsEvent
 from deebot_client.events.map import CachedMapInfoEvent, MapChangedEvent
 from deebot_client.map import Map
 
@@ -86,8 +87,27 @@ class EcovacsMap(
             self._attr_image_last_updated = event.when
             self.async_write_ha_state()
 
+        async def on_rooms(event: RoomsEvent) -> None:
+            # 把设备端房间表（顺序即固件/App 的房间顺序，且包含全部房间）
+            # 暴露给卡片：地图卡片用它生成"全屋清扫顺序"列表的默认顺序。
+            # 注意：从 SVG 解析房间只能拿到有路径的房间，顺序也未必一致。
+            seen: set[int] = set()
+            rooms: list[dict[str, object]] = []
+            for room in event.rooms:
+                try:
+                    room_id = int(room.id)
+                except (TypeError, ValueError):
+                    continue
+                if room_id in seen:
+                    continue
+                seen.add(room_id)
+                rooms.append({"id": room_id, "name": str(room.name).strip()})
+            self._attr_extra_state_attributes["rooms"] = rooms
+            self.async_write_ha_state()
+
         self._subscribe(self._capability.cached_info.event, on_info)
         self._subscribe(self._capability.changed.event, on_changed)
+        self._subscribe(RoomsEvent, on_rooms)
 
     @override
     async def async_update(self) -> None:
