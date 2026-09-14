@@ -21,17 +21,26 @@ class T90ModernMapCardEditor extends HTMLElement {
   }
 
   set hass(hass) {
+    const first = !this._hass;
     this._hass = hass;
-    this._render();
+    // 注意：HA 会高频推送 hass 更新。若每次都整树重建 shadowRoot，
+    // 正在进行的拖拽手势会被销毁（拖拽失效+编辑器闪烁），因此只在
+    // 首次拿到 hass 或配置变化时重建；房间列表尚未加载成功时补拉。
+    if (first || !this._rendered) {
+      this._render();
+    } else if (!this._roomsForOrder && this._config?.image_entity) {
+      this._loadRoomsForOrder();
+    }
   }
 
   setConfig(config) {
     this._config = { ...config };
-    this._render();
+    this._rendered = false;
+    if (this._hass) this._render();
   }
 
   _render() {
-    if (!this._hass) return;
+    if (!this._hass || this._rendered) return;
     this.shadowRoot.innerHTML = `
       <style>
         .form { display: grid; gap: 16px; padding: 8px 0; }
@@ -154,7 +163,11 @@ class T90ModernMapCardEditor extends HTMLElement {
       this._updateConfig("status_entity", event.detail.value || "");
     });
 
-    this._roomsForOrder = null;
+    // 房间列表缓存：仅在地图实体变化时清空，避免面板重建时反复重新拉取
+    if (this._renderedImageEntity !== this._config.image_entity) {
+      this._roomsForOrder = null;
+      this._renderedImageEntity = this._config.image_entity;
+    }
     this.shadowRoot.querySelector(".order-load").addEventListener("click", () => {
       this._roomsForOrder = null; // 强制重新拉取
       this._loadRoomsForOrder();
@@ -180,9 +193,20 @@ class T90ModernMapCardEditor extends HTMLElement {
     } else if (this._config.image_entity) {
       this._loadRoomsForOrder();
     }
+    this._rendered = true;
   }
 
   async _loadRoomsForOrder() {
+    if (this._loadingRooms) return; // 防止 hass 高频推送导致并发重复拉取
+    this._loadingRooms = true;
+    try {
+      await this._loadRoomsForOrderInner();
+    } finally {
+      this._loadingRooms = false;
+    }
+  }
+
+  async _loadRoomsForOrderInner() {
     const empty = this.shadowRoot.querySelector(".order-empty");
     const list = this.shadowRoot.querySelector(".order-list");
     if (!empty || !list) return;
@@ -265,37 +289,61 @@ class T90ModernMapCardEditor extends HTMLElement {
         this._renderOrderList();
       });
       row.append(handle, name, up, down);
-      // 拖拽排序：仅从手柄启动（触屏/鼠标通用），行区域仍可滚动配置面板
-      handle.addEventListener("pointerdown", (event) => {
-        if (event.button !== 0) return;
-        event.preventDefault();
-        handle.setPointerCapture(event.pointerId);
+      // 拖拽排序：鼠标可在行任意处拖动，触屏仅通过 ⠿ 手柄（避免与面板滚动冲突）。
+      // 命中判断用各行的 getBoundingClientRect，不依赖 elementFromPoint——
+      // 后者无法可靠穿透 HA 编辑器多层 shadow DOM。
+      const startDrag = (startEvent) => {
+        if (startEvent.button !== 0) return;
+        const captureEl = startEvent.currentTarget;
+        startEvent.preventDefault();
+        captureEl.setPointerCapture(startEvent.pointerId);
         row.classList.add("dragging");
         const onMove = (moveEvent) => {
-          // 注意：编辑器渲染在 shadow DOM 内，document.elementFromPoint
-          // 无法穿透 shadow 边界，必须用 shadowRoot.elementFromPoint。
-          const el = this.shadowRoot.elementFromPoint(moveEvent.clientX, moveEvent.clientY);
-          const target = el?.closest?.(".order-row");
-          if (!target || target === row || target.parentElement !== list) return;
-          const rect = target.getBoundingClientRect();
-          const insertBefore = moveEvent.clientY < rect.top + rect.height / 2;
+          const y = moveEvent.clientY;
+          const rows = [...list.querySelectorAll(".order-row")];
+          if (!rows.length) return;
+          let target = null;
+          let insertBefore = false;
+          for (const candidate of rows) {
+            if (candidate === row) continue;
+            const rect = candidate.getBoundingClientRect();
+            if (y >= rect.top && y <= rect.bottom) {
+              target = candidate;
+              insertBefore = y < rect.top + rect.height / 2;
+              break;
+            }
+          }
+          if (!target) {
+            // 拖到列表上/下边界之外：移到头部或尾部
+            const firstRect = rows[0].getBoundingClientRect();
+            const lastRect = rows[rows.length - 1].getBoundingClientRect();
+            if (y < firstRect.top && row !== rows[0]) list.insertBefore(row, rows[0]);
+            else if (y > lastRect.bottom && row !== rows[rows.length - 1]) list.append(row);
+            return;
+          }
           list.insertBefore(row, insertBefore ? target : target.nextSibling);
         };
         const onUp = () => {
           row.classList.remove("dragging");
-          handle.removeEventListener("pointermove", onMove);
-          handle.removeEventListener("pointerup", onUp);
-          handle.removeEventListener("pointercancel", onUp);
+          captureEl.removeEventListener("pointermove", onMove);
+          captureEl.removeEventListener("pointerup", onUp);
+          captureEl.removeEventListener("pointercancel", onUp);
           const newOrder = [...list.querySelectorAll(".order-row")]
             .map((el) => Number(el.dataset.roomId));
-          this._updateConfig("room_order", newOrder);
+          if (newOrder.join(",") !== (this._config.room_order || []).map(Number).join(",")) {
+            this._updateConfig("room_order", newOrder);
+          }
           this._renderOrderList();
         };
-        // setPointerCapture 在 handle 上，move/up 事件都会派发到 handle
-        handle.addEventListener("pointermove", onMove);
-        handle.addEventListener("pointerup", onUp);
-        handle.addEventListener("pointercancel", onUp);
+        // setPointerCapture 在 captureEl 上，move/up 都会派发给它
+        captureEl.addEventListener("pointermove", onMove);
+        captureEl.addEventListener("pointerup", onUp);
+        captureEl.addEventListener("pointercancel", onUp);
+      };
+      row.addEventListener("pointerdown", (event) => {
+        if (event.pointerType === "mouse") startDrag(event);
       });
+      handle.addEventListener("pointerdown", startDrag);
       list.append(row);
     });
   }
@@ -592,7 +640,7 @@ class T90ModernMapCard extends HTMLElement {
         }
 
         /* ---------- 参数区（App 风格） ---------- */
-        .params { padding: 8px 16px 2px; display: grid; gap: 14px; }
+        .params { padding: 8px 16px 18px; display: grid; gap: 14px; }
         .param-head {
           display: flex; align-items: baseline; gap: 8px; margin-bottom: 7px;
         }
@@ -737,6 +785,7 @@ class T90ModernMapCard extends HTMLElement {
         <div class="map-wrap">
           <div class="viewport"><div class="map"><div class="loading">正在加载地图</div></div></div>
           <div class="toast" aria-live="polite" style="display:none"></div>
+        </div>
         <div class="status-row">
           <div class="status"><span class="dot"></span><span class="status-text"></span></div>
           <span class="extra-status"></span>
@@ -745,11 +794,6 @@ class T90ModernMapCard extends HTMLElement {
             <button class="map-tool dock" title="返回基站" aria-label="返回基站">${ICONS.dock}</button>
             <button class="map-tool expand-float" title="全屏查看" aria-label="全屏查看">${ICONS.expand}</button>
           </span>
-        </div>
-        </div>
-        <div class="status-row">
-          <div class="status"><span class="dot"></span><span class="status-text"></span></div>
-          <span class="extra-status"></span>
         </div>
         <div class="selection-bar">
           <span class="selection-text">未选择区域 · 点击地图选择（默认清扫全屋）</span>
@@ -995,8 +1039,10 @@ class T90ModernMapCard extends HTMLElement {
     const seconds = Math.max(5, Number(this._config.refresh_interval) || 10);
     this._timer = window.setInterval(() => {
       const vacuum = this._hass?.states[this._config.vacuum_entity];
+      // 仅在清扫相关状态下周期刷新地图；空闲（在基站/空闲）时地图是静止的，
+      // 周期刷新只会造成无意义的重建与闪烁。
       const active = ["cleaning", "returning", "paused"].includes(vacuum?.state);
-      if (active || Date.now() - this._lastRefresh > 60000) this._refreshMap(false);
+      if (active) this._refreshMap(false);
     }, seconds * 1000);
   }
 
@@ -1055,6 +1101,12 @@ class T90ModernMapCard extends HTMLElement {
       this._applySelection();
       if (this._dialog?.open) this._syncDialogMap();
     } catch (error) {
+      // 已成功加载过地图时，瞬时失败（如刷新令牌轮换竞态）不覆盖现有地图，
+      // 避免周期刷新偶发的"白屏闪烁"；仅控制台记录，下次刷新自动恢复。
+      if (this._mapLoaded) {
+        console.warn("[t90-modern-map-card] 地图刷新失败（保留当前地图）:", error);
+        return;
+      }
       this._showError(`地图加载失败: ${error.message}`);
     }
   }
