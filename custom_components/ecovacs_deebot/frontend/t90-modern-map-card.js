@@ -863,6 +863,13 @@ class T90ModernMapCard extends HTMLElement {
           color: var(--primary-color); font-size: 11.5px; text-align: center;
         }
 
+        /* ---------- AI 智能托管（开启时隐藏手动参数区） ---------- */
+        .agent-hint {
+          margin-top: 6px; font-size: 11px; line-height: 1.5;
+          color: var(--secondary-text-color);
+        }
+        .params.agent-on .param-block:not(.agent-block) { display: none; }
+
         /* ---------- 清扫中操作（暂停 / 结束并返回，替换启动按钮） ---------- */
         .active-actions {
           display: none; grid-template-columns: 1fr 1fr; gap: 10px;
