@@ -177,6 +177,15 @@ pip install -r tools/requirements.txt
 python tools/probe.py --account 手机号 --password 密码
 ```
 
+`tools/ai_pref_probe.py`：**只读**探测 App「AI 智能托管」背后的开关命令（不会启动清扫、不改任何设置）。它做两件事——逐条发 `get*` 查询看固件是否支持（重点是 `getCleanPreference`），并挂一个 MQTT 全量报文监听口，监听期间在 App 里切换「AI 智能托管」开关即可看到真实命令名与取值。deebot_client 已在 HA 容器里时，直接容器内跑即可：
+
+```bash
+docker cp tools/ai_pref_probe.py homeassistant:/tmp/
+docker exec -it homeassistant python3 /tmp/ai_pref_probe.py --account 手机号 --password 密码
+```
+
+也可用本机 venv：`python3 -m venv .venv && .venv/bin/pip install "deebot-client>=18.5" aiohttp zstandard`，再 `.venv/bin/python tools/ai_pref_probe.py ...`。完整报文会写入 `ai_pref_probe.log`。
+
 ## <a id="english"></a>English
 
 Unofficial Home Assistant integration for Ecovacs DEEBOT robots, focused on **new China-market models not yet supported by the built-in integration** (e.g. DEEBOT T90 PRO, class `jkzzec`).
