@@ -8,6 +8,17 @@
 
 > 🇬🇧 English users: see [English](#english) section below.
 
+## 📸 效果预览
+
+自研 **App 风格现代化地图卡片**（`t90-modern-map-card`）：地图点选房间、AI 智能托管、清扫参数一键下发。
+
+| 清扫参数（AI 托管关闭） | AI 智能托管（开启，参数由机器人自主决定） |
+|---|---|
+| ![清扫参数卡片](docs/screenshots/card-clean-params.jpg) | ![AI 智能托管卡片](docs/screenshots/card-agent-mode.jpg) |
+
+- **AI 智能托管**：开启后吸力/水量/模式/效率由机器人按房间类型与地面材质自主决定，可清扫全屋，也可点选地图上的房间；开关状态与设备双向同步
+- **手动参数模式**：清洁模式、吸力、水量（App 相同的 1-50 刻度）、清洁效率、次数逐项可调
+
 ## ✨ 为什么做这个项目
 
 HA 内置的 Ecovacs 集成依赖 [deebot_client](https://github.com/DeebotUniverse/client.py) 库的机型库，**国行新机型收录严重滞后**。如果你的机器人登录后没有设备、或提示 `Device not supported`（比如 T50 PRO、T90 PRO、X5 PRO 等国行新机型），这个项目就是解决方案：
@@ -200,8 +211,9 @@ Unofficial Home Assistant integration for Ecovacs DEEBOT robots, focused on **ne
 
 - [DeebotUniverse/client.py](https://github.com/DeebotUniverse/client.py) — 核心协议库
 - [Home Assistant Core](https://github.com/home-assistant/core) — 官方 ecovacs 集成模板
-- [lifujie25/ha-ecovacs-t90-pro](https://github.com/lifujie25/ha-ecovacs-t90-pro) — v0.2.0 的中国区 T90 地图协议兼容实现（`t90_map.py`、地图卡片）移植自该项目
-- [Osezno-byte/ecovacs-omni-ha](https://github.com/Osezno-byte/ecovacs-omni-ha) — freeClean 9 字段扩展协议编码器（`freeclean.py`）、`getQuickCommand` 场景发现/重放、zstd subsets 解析与定时清扫蓝图移植自该项目（MIT）
+- 特别感谢两位开源项目的作者 ❤️：
+  - [@lifujie25](https://github.com/lifujie25)（[ha-ecovacs-t90-pro](https://github.com/lifujie25/ha-ecovacs-t90-pro)）— v0.2.0 的中国区 T90 地图协议兼容实现（`t90_map.py`、地图卡片）移植自该项目
+  - [@Osezno-byte](https://github.com/Osezno-byte)（[ecovacs-omni-ha](https://github.com/Osezno-byte/ecovacs-omni-ha)）— freeClean 9 字段扩展协议编码器（`freeclean.py`）、`getQuickCommand` 场景发现/重放、zstd subsets 解析与定时清扫蓝图移植自该项目（MIT）
 - [HACS](https://hacs.xyz/)
 
 ## 📄 许可证
