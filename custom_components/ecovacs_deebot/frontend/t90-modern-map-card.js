@@ -985,6 +985,17 @@ class T90ModernMapCard extends HTMLElement {
             </div>
           </div>
           <div class="params">
+            <div class="param-block agent-block">
+              <div class="param-head">
+                <span class="param-title">AI 智能托管</span>
+                <span class="param-value" data-value="agent">关闭</span>
+              </div>
+              <div class="seg-row" data-param="agent" style="grid-template-columns:repeat(2,1fr)">
+                <button class="seg" data-value="off"><span>关闭</span></button>
+                <button class="seg" data-value="on"><span>开启</span></button>
+              </div>
+              <div class="agent-hint">开启后吸力/水量/模式/效率由机器人按房间类型与地面材质自主决定（仅全屋清扫可用）</div>
+            </div>
             <div class="param-block">
               <div class="param-head">
                 <span class="param-title">清洁模式</span>
@@ -1184,6 +1195,12 @@ class T90ModernMapCard extends HTMLElement {
       const label = this.shadowRoot.querySelector(`.param-value[data-value="${param}"]`);
       if (label) label.textContent = valueNames[param][current] || "跟随设置";
     }
+    // AI 智能托管（开关语义）
+    this.shadowRoot.querySelectorAll('.seg-row[data-param="agent"] .seg').forEach((seg) => {
+      seg.classList.toggle("active", (seg.dataset.value === "on") === this._params.agent);
+    });
+    const agentLabel = this.shadowRoot.querySelector('.param-value[data-value="agent"]');
+    if (agentLabel) agentLabel.textContent = this._params.agent ? "开启" : "关闭";
     // 次数
     this.shadowRoot.querySelectorAll('.seg-row[data-param="passes"] .seg').forEach((seg) => {
       seg.classList.toggle("active", Number(seg.dataset.value) === this._params.passes);
@@ -1521,6 +1538,12 @@ class T90ModernMapCard extends HTMLElement {
         ? "发送中…"
         : wholeHouse ? "全屋" : `${this._selectedRooms.size} 个区域`;
     }
+    // AI 智能托管：仅全屋清扫（未选房间）时显示；开启时隐藏手动参数区
+    const agentBlock = this.shadowRoot.querySelector(".agent-block");
+    if (agentBlock) agentBlock.style.display = wholeHouse ? "" : "none";
+    this.shadowRoot.querySelector(".params")?.classList.toggle(
+      "agent-on", wholeHouse && this._params.agent,
+    );
     this._syncButtons();
   }
 
@@ -1584,11 +1607,14 @@ class T90ModernMapCard extends HTMLElement {
     const names = wholeHouse
       ? "全屋"
       : [...this._selectedRooms.values()].join("、");
-    const params = this._cleanParams();
+    const agentMode = wholeHouse && this._params.agent;
+    const params = agentMode ? {} : this._cleanParams();
     const description = this._describeParams(params);
-    const confirmText = wholeHouse
-      ? `确认清扫全屋？${description ? `\n参数：${description}` : ""}`
-      : `确认清扫以下区域？\n${names}${description ? `\n参数：${description}` : ""}`;
+    const confirmText = agentMode
+      ? "确认以「AI 智能托管」清扫全屋？\n吸力/水量/模式/效率由机器人按房间自主决定"
+      : wholeHouse
+        ? `确认清扫全屋？${description ? `\n参数：${description}` : ""}`
+        : `确认清扫以下区域？\n${names}${description ? `\n参数：${description}` : ""}`;
     if (!(await this._askConfirm(confirmText))) {
       this._setCommandStatus("已取消启动");
       return;
@@ -1606,17 +1632,29 @@ class T90ModernMapCard extends HTMLElement {
       this._applySelection();
     }, 20000);
     try {
-      await this._hass.callService("vacuum", "send_command", {
-        entity_id: this._config.vacuum_entity,
-        command: "spot_area",
-        params: {
-          rooms: roomIds,
-          cleanings: 1,
-          ...params,
-        },
-      });
+      if (agentMode) {
+        // AI 智能托管（实测 App 报文）：setSwitchState {"agentClean":1}
+        // 开启后由设备端生成参数，全屋走 Clean(START)，不下发任何参数
+        await this._hass.callService("vacuum", "send_command", {
+          entity_id: this._config.vacuum_entity,
+          command: "agent_clean",
+          params: { enable: true },
+        });
+      } else {
+        await this._hass.callService("vacuum", "send_command", {
+          entity_id: this._config.vacuum_entity,
+          command: "spot_area",
+          params: {
+            rooms: roomIds,
+            cleanings: 1,
+            ...params,
+          },
+        });
+      }
       this._setCommandStatus(
-        `已发送清扫命令：${names}${description ? `（${description}）` : ""}`,
+        agentMode
+          ? "已发送 AI 智能托管清扫命令：全屋"
+          : `已发送清扫命令：${names}${description ? `（${description}）` : ""}`,
         false,
         true,
       );

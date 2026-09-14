@@ -253,6 +253,21 @@ class EcovacsVacuum(
                 translation_key="vacuum_send_command_params_dict",
             )
 
+        if command == "agent_clean":
+            # AI 智能托管（App 报文实测，jkzzec 1.103.0）：
+            # App 切换「AI 智能托管」开关下发 setSwitchState {"agentClean": 1|0}；
+            # 开启后由设备端按房间类型/地面材质自主生成吸力/水量等参数，
+            # 全屋清洁走 Clean(START) 通道，不下发任何参数。
+            # 注意：getCleanPreference 在该固件上为 20003 rcp not support，
+            # 托管开关不是 clean.preference，而是 switchState.agentClean。
+            enable = params.get("enable", True)
+            await self._device.execute_command(
+                CustomCommand("setSwitchState", {"agentClean": 1 if enable else 0})
+            )
+            if enable:
+                await self._clean_command(CleanAction.START)
+            return
+
         if command in ["spot_area", "custom_area"]:
             if params is None:
                 raise ServiceValidationError(
