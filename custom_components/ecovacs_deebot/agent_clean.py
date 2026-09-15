@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import secrets
 from typing import Any
 
 from deebot_client.commands.json.common import JsonCommandWithMessageHandling
@@ -46,6 +47,90 @@ def _notify_agent_clean(event_bus: EventBus, data: dict[str, Any]) -> HandlingRe
         return HandlingResult(HandlingState.ANALYSE, "agentClean missing")
     event_bus.notify(AgentCleanEvent(enabled=bool(data["agentClean"])))
     return HandlingResult.success()
+
+
+# 智能体任务的每房间默认参数（抓包观测值：多数房间均为这组；
+# 厨房等特殊房间由云端 AI 单独生成，MQTT 通道抓不到生成来源）。
+_DEFAULT_CLEAN_PARA = {
+    "cycle": 1,
+    "efficiency": 0,
+    "label": 1,
+    "mode": 0,
+    "suction": 0,
+    "water_volume": 15,
+}
+# station_para 抓包里全部为 255/0 的"未设置"占位值，设备端自行决定。
+_DEFAULT_STATION_PARA = {
+    "dry_time": 255,
+    "is_deepWash": 255,
+    "mop_mode": 255,
+    "need_dry": 0,
+    "need_dustCollect": 0,
+    "need_washMop": 0,
+}
+
+
+def build_agent_info(
+    did: str, map_id: int, rooms: list[tuple[int, str]]
+) -> list[dict[str, Any]]:
+    """构造 App「智能体模式」启动报文中的 agentInfo 字段。
+
+    结构为 2026-09-15 抓包逆向（tools/ai_pref_probe.log，jkzzec 1.103.0）：
+    App 智能体启动统一走 clean_V2 命令，无论全屋（content.type=auto）还是
+    选房（content.type=freeClean + value），都额外携带 agentInfo[0]，
+    其中 content 为每个房间的任务卡：task_area（房间 id/名称/map_id）+
+    parameter（clean_para/station_para），order/task_id 按所选房间重新
+    编号 1..N。**App 据此把本次任务标记为「智能体托管清扫」**——缺了
+    agentInfo，App 就显示「按我的设置清扫」。
+
+    每房间 clean_para 本应由云端 AI 按房间类型生成（抓包中各房间水量
+    5/15/25/35 不等），生成走 App 云端 HTTPS 通道，MQTT 抓不到；此处用
+    抓包中的多数默认值。queue_id/gen_reason 两次实测均不同、无规律
+    （疑似云端生成），按观测形态随机生成，若设备/App 不认可再逆向。
+    """
+    content = [
+        {
+            "area_temp_set": [],
+            "order": order,
+            "parameter": {
+                "clean_para": _DEFAULT_CLEAN_PARA.copy(),
+                "station_para": _DEFAULT_STATION_PARA.copy(),
+            },
+            "petHotArea": 0,
+            "sub_area_para": [],
+            "sub_type_deebot": 1,
+            "sub_type_omni": 255,
+            "task_area": {
+                "area_name": name,
+                "area_type": 0,
+                "contour": [],
+                "fur_room_id": 255,
+                "fur_type": 255,
+                "id": room_id,
+                "map_id": map_id,
+            },
+            "task_id": order,
+            "task_status": {
+                "end_time": "",
+                "failure_reason": 255,
+                "insert_time": "",
+                "source": 0,
+                "start_time": "",
+                "status": 0,
+            },
+            "type": 1,
+        }
+        for order, (room_id, name) in enumerate(rooms, 1)
+    ]
+    return [
+        {
+            "content": content,
+            "gen_reason": f"{did}_{secrets.token_hex(4)}_cot",
+            "queue_id": secrets.randbelow(90000) + 10000,
+            "queue_state": 0,
+            "start": {"electricity": 255, "source": 0, "time": ""},
+        }
+    ]
 
 
 class GetSwitchState(JsonCommandWithMessageHandling, MessageBodyDataDict):

@@ -352,6 +352,51 @@ class T90FreeCleanV2(CleanV2):
         return args
 
 
+class _T90AgentInfoMixin:
+    """在 clean_V2 报文顶层追加 agentInfo（App「智能体模式」启动必需）。
+
+    2026-09-15 抓包（jkzzec 1.103.0）实测：App 智能体启动无论是全屋
+    （content.type=auto）还是选房（content.type=freeClean + value），都在
+    clean_V2 报文 data 顶层额外携带 agentInfo 字段；缺失该字段时任务会
+    成功（code 0），但 App 端会把它显示为「按我的设置清扫」。
+
+    **本 mixin 只增强 _get_args，不定义 __init__**：MRO 中 mixin 排在
+    真实命令类之前，一旦它自带 __init__，子类的 super().__init__ 会命中
+    它而跳过 CleanV2/T90FreeCleanV2 的构造，导致 _args 根本没生成。
+    子类各自负责在自己的 __init__ 里先赋 _agent_info 再调父类构造
+    （_get_args 会在父类构造中被调用，顺序不能反）。
+    """
+
+    _agent_info: list[dict[str, Any]]
+
+    def _get_args(self, action: CleanAction) -> dict[str, Any]:
+        args = super()._get_args(action)  # type: ignore[misc]
+        if action == CleanAction.START:
+            args["agentInfo"] = self._agent_info
+        return args
+
+
+class T90AgentAutoCleanV2(_T90AgentInfoMixin, CleanV2):
+    """智能体模式全屋启动：clean_V2 type=auto + agentInfo（全房间任务卡）。"""
+
+    def __init__(self, agent_info: list[dict[str, Any]]) -> None:
+        self._agent_info = agent_info
+        super().__init__(CleanAction.START)
+
+
+class T90AgentCleanV2(_T90AgentInfoMixin, T90FreeCleanV2):
+    """智能体模式选房启动：freeClean 短格式 + agentInfo（仅所选房间）。
+
+    App 实测报文（房间 7/9/11）：
+    {"act":"start","content":{"type":"freeClean","value":"1,7;1,9;1,11"},
+     "agentInfo":[{...所选房间任务卡，order/task_id 重新 1..N...}]}
+    """
+
+    def __init__(self, value: str, agent_info: list[dict[str, Any]]) -> None:
+        self._agent_info = agent_info
+        super().__init__(value)
+
+
 class GetQuickCommandT90(
     JsonCommandWithMessageHandling, MessageBodyDataList
 ):

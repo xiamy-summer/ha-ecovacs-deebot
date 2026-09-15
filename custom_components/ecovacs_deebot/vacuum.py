@@ -34,11 +34,21 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util import slugify
 
 from . import EcovacsConfigEntry
-from .agent_clean import AgentCleanEvent, GetSwitchState  # noqa: F401  导入即注册 onSwitchState
+from .agent_clean import (  # noqa: F401  导入即注册 onSwitchState
+    AgentCleanEvent,
+    GetSwitchState,
+    build_agent_info,
+)
 from .const import DOMAIN
 from .entity import EcovacsEntity
 from .freeclean import FreeCleanError, assert_valid_value
-from .t90_map import GetQuickCommandT90, T90FreeCleanV2, get_scenarios
+from .t90_map import (
+    GetQuickCommandT90,
+    T90AgentAutoCleanV2,
+    T90AgentCleanV2,
+    T90FreeCleanV2,
+    get_scenarios,
+)
 from .util import get_name_key
 
 _LOGGER = logging.getLogger(__name__)
@@ -237,6 +247,51 @@ class EcovacsVacuum(
             self._capability.clean.action.command(action)
         )
 
+    def _build_agent_info(self, selected: list[int]) -> list[dict[str, Any]] | None:
+        """用缓存的房间表与当前地图 ID 构造 agentInfo。
+
+        返回 None 表示房间表/地图尚未就绪，调用方应退回无 agentInfo 的旧行为。
+        """
+        if self._room_event is None or not self._room_event.rooms:
+            return None
+        if selected:
+            room_map = {room.id: room.name for room in self._room_event.rooms}
+            rooms = [(rid, room_map.get(rid, f"区域 {rid}")) for rid in selected]
+        else:
+            rooms = [(room.id, room.name) for room in self._room_event.rooms]
+        # 地图 ID 直接从 RoomsEvent 取（房间表就是按该地图上报的），
+        # 比从 cachedMapInfo 里猜 using 地图更可靠。
+        try:
+            map_id = int(self._room_event.map_id)
+        except (TypeError, ValueError):
+            map_id = 0
+        did = str(self._device.device_info.get("did", ""))
+        return build_agent_info(did, map_id, rooms)
+
+    async def _async_agent_clean_start(self, selected: list[int]) -> None:
+        """智能体模式启动（2026-09-15 抓包：App 统一走 clean_V2 + agentInfo）。
+
+        agentInfo 是 App 把任务标记为「智能体托管清扫」的依据：缺了它
+        任务也能执行（code 0），但 App 会显示「按我的设置清扫」。房间表
+        未就绪时退回无 agentInfo 的旧行为（清扫仍进行，App 显示不完整）。
+        """
+        agent_info = self._build_agent_info(selected)
+        if agent_info is None:
+            _LOGGER.debug("agent clean: 房间表未就绪，退回无 agentInfo 启动")
+            if selected:
+                await self._device.execute_command(
+                    T90FreeCleanV2(";".join(f"1,{r}" for r in selected))
+                )
+            else:
+                await self._clean_command(CleanAction.START)
+            return
+        if selected:
+            await self._device.execute_command(
+                T90AgentCleanV2(";".join(f"1,{r}" for r in selected), agent_info)
+            )
+        else:
+            await self._device.execute_command(T90AgentAutoCleanV2(agent_info))
+
     @override
     async def async_locate(self, **kwargs: Any) -> None:
         """Locate the vacuum cleaner."""
@@ -281,12 +336,9 @@ class EcovacsVacuum(
             self._agent_enabled = bool(enable)
             self.async_write_ha_state()
             if enable and params.get("start") is True:
-                rooms = params.get("rooms") or []
-                if rooms:
-                    room_ids = ";".join(f"1,{int(r)}" for r in rooms)
-                    await self._device.execute_command(T90FreeCleanV2(room_ids))
-                else:
-                    await self._clean_command(CleanAction.START)
+                await self._async_agent_clean_start(
+                    [int(r) for r in (params.get("rooms") or [])]
+                )
             return
 
         if command in ["spot_area", "custom_area"]:
