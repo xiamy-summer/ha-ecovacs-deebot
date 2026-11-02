@@ -118,6 +118,9 @@
       },
       "station_action_empty_dustbin": {
         "name": "集尘"
+      },
+      "station_action_wash_mop": {
+        "name": "清洗拖布"
       }
     },
     "event": {

@@ -1,5 +1,13 @@
 # 更新日志
 
+## Unreleased
+
+### ✨ 新功能
+
+- **清洗拖布（基站动作）**：
+  - 集成侧：`SUPPORTED_STATION_ACTIONS` 白名单补上 `StationAction.WASH_MOP`（库枚举与 `jkzzec` 设备能力早已声明，白名单遗漏导致按钮实体从不创建），自动生成 `button.xxx_station_action_wash_mop` 按钮实体（清洗拖布）
+  - 卡片：地图下方工具区新增「清洗拖布」按钮（水滴图标），走 `vacuum.send_command` → `stationAction {"act":1,"type":4}`；清扫中/暂停/返回中自动置灰；编辑器支持显隐开关（`show_wash_mop`，默认显示）
+
 ## v0.3.0 — AI 智能托管 + 全新现代化地图卡片
 
 > 面向 DEEBOT T90 PRO（`jkzzec`）等中国区机型，本版围绕「App 化体验」重构了地图卡片与清扫交互。

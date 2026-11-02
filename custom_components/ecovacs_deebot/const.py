@@ -48,6 +48,9 @@ SUPPORTED_STATION_ACTIONS = (
     StationAction.CLEAN_BASE,
     StationAction.DRY_MOP,
     StationAction.EMPTY_DUSTBIN,
+    # 清洗拖布（type=4）：jkzzec.py 设备能力已声明，2026-11 补上白名单，
+    # 此前遗漏导致「清洗拖布」按钮实体从不创建
+    StationAction.WASH_MOP,
 )
 
 LEGACY_SUPPORTED_LIFESPANS = (

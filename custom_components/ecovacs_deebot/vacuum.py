@@ -5,6 +5,8 @@ import logging
 from typing import TYPE_CHECKING, Any, override
 
 from deebot_client.capabilities import Capabilities, DeviceType
+from deebot_client.commands import StationAction
+from deebot_client.commands.json import station_action
 from deebot_client.device import Device
 from deebot_client.events import (
     CachedMapInfoEvent,
@@ -313,6 +315,15 @@ class EcovacsVacuum(
                 translation_domain=DOMAIN,
                 translation_key="vacuum_send_command_params_dict",
             )
+
+        if command == "wash_mop":
+            # 清洗拖布（基站动作）：stationAction {"act":1,"type":4}。
+            # jkzzec 设备能力（hardware/jkzzec.py）已声明 WASH_MOP，
+            # 同时会生成 station_action_wash_mop 按钮实体，两条通道等价。
+            await self._device.execute_command(
+                station_action.StationAction(StationAction.WASH_MOP)
+            )
+            return
 
         if command == "agent_clean":
             # AI 智能托管 / App「智能体模式」（App 报文实测，jkzzec 1.103.0）：
