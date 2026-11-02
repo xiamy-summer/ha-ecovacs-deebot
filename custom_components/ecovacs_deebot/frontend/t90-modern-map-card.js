@@ -122,7 +122,7 @@ class T90ModernMapCardEditor extends HTMLElement {
           <label><ha-switch class="t-params"></ha-switch>启动按钮 + 清扫参数（模式/吸力/水量/效率/次数）</label>
           <label><ha-switch class="t-dock"></ha-switch>返回基站按钮</label>
           <label><ha-switch class="t-locate"></ha-switch>定位按钮</label>
-          <label><ha-switch class="t-wash"></ha-switch>清洗拖布按钮</label>
+          <label><ha-switch class="t-station"></ha-switch>基站动作按钮（集尘/烘干/清洗拖布）</label>
         </div>
         <div class="order-head">
           <span class="order-title">全屋清扫顺序</span>
@@ -212,7 +212,7 @@ class T90ModernMapCardEditor extends HTMLElement {
       [".t-params", "show_params", true],
       [".t-dock", "show_dock", true],
       [".t-locate", "show_locate", true],
-      [".t-wash", "show_wash_mop", true],
+      [".t-station", "show_station_actions", true],
     ];
     for (const [selector, key, defaultValue] of toggleMap) {
       const sw = this.shadowRoot.querySelector(selector);
@@ -511,6 +511,10 @@ const ICONS = {
   locate: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v3M12 18.2v3M2.8 12h3M18.2 12h3"/><circle cx="12" cy="12" r="7.2"/></svg>`,
   // 清洗拖布：水滴 + 水槽水面
   washMop: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5c1.9 2.7 4.2 5.4 4.2 7.8a4.2 4.2 0 0 1-8.4 0c0-2.4 2.3-5.1 4.2-7.8Z"/><path d="M4.5 17.6h15M6.5 20.6h11"/></svg>`,
+  // 集尘：尘桶
+  dustbin: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5.2 8h13.6l-1.1 10.4a2 2 0 0 1-2 1.8H8.3a2 2 0 0 1-2-1.8L5.2 8Z"/><path d="M3.5 8h17"/><path d="M9.5 5.5V3.8h5v1.7"/><path d="M10 11.5v5M14 11.5v5"/></svg>`,
+  // 烘干拖布：热风
+  dryMop: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 19.5h15"/><path d="M8 16c0-3 2.8-3.2 2.8-6S9.3 7.2 9.3 5.5"/><path d="M15 16c0-3 2.8-3.2 2.8-6s-1.5-2.8-1.5-4.5"/></svg>`,
 };
 
 // 吸力档位图标：扇叶数量随档位递增（安静1叶 → 强力+4叶），风格贴近 App 螺旋扇
@@ -586,7 +590,7 @@ class T90ModernMapCard extends HTMLElement {
       show_params: true,
       show_dock: true,
       show_locate: true,
-      show_wash_mop: true,
+      show_station_actions: true,
       ...config,
     };
     this._roomOrder = this._loadRoomOrder();
@@ -975,7 +979,9 @@ class T90ModernMapCard extends HTMLElement {
           <span class="status-actions">
             <button class="map-tool locate" title="定位扫地机" aria-label="定位扫地机">${ICONS.locate}</button>
             <button class="map-tool dock" title="返回基站" aria-label="返回基站">${ICONS.dock}</button>
-            <button class="map-tool wash-mop" title="清洗拖布" aria-label="清洗拖布">${ICONS.washMop}</button>
+            <button class="map-tool station-tool empty-dustbin" title="集尘" aria-label="集尘">${ICONS.dustbin}</button>
+            <button class="map-tool station-tool dry-mop" title="烘干拖布" aria-label="烘干拖布">${ICONS.dryMop}</button>
+            <button class="map-tool station-tool wash-mop" title="清洗拖布" aria-label="清洗拖布">${ICONS.washMop}</button>
             <button class="map-tool expand-float" title="全屏查看" aria-label="全屏查看">${ICONS.expand}</button>
           </span>
         </div>
@@ -1144,8 +1150,12 @@ class T90ModernMapCard extends HTMLElement {
       this._vacuumAction("return_to_base", "正在发送返回基站命令…", "已发送返回基站命令"));
     this.shadowRoot.querySelector(".locate").addEventListener("click", () =>
       this._vacuumAction("locate", "正在定位扫地机…", "已发送定位命令"));
+    this.shadowRoot.querySelector(".empty-dustbin").addEventListener("click", () =>
+      this._stationAction("empty_dustbin", "集尘"));
+    this.shadowRoot.querySelector(".dry-mop").addEventListener("click", () =>
+      this._stationAction("dry_mop", "烘干拖布"));
     this.shadowRoot.querySelector(".wash-mop").addEventListener("click", () =>
-      this._washMop());
+      this._stationAction("wash_mop", "清洗拖布"));
     // 参数分段选择（模式/吸力/效率/次数）：再次点击已选项 = 恢复跟随设置
     this.shadowRoot.querySelectorAll(".seg-row").forEach((row) => {
       row.addEventListener("click", (event) => {
@@ -1193,7 +1203,9 @@ class T90ModernMapCard extends HTMLElement {
       [".params-wrap", this._config.show_params !== false],
       [".dock", this._config.show_dock !== false],
       [".locate", this._config.show_locate !== false],
-      [".wash-mop", this._config.show_wash_mop !== false],
+      [".empty-dustbin", this._config.show_station_actions !== false],
+      [".dry-mop", this._config.show_station_actions !== false],
+      [".wash-mop", this._config.show_station_actions !== false],
     ];
     for (const [selector, visible] of visibility) {
       const el = this.shadowRoot.querySelector(selector);
@@ -1776,17 +1788,17 @@ class T90ModernMapCard extends HTMLElement {
     }
   }
 
-  /** 清洗拖布：vacuum.send_command wash_mop（集成侧走 stationAction type=4）。
-   * 机器人不在基站时设备会自行处理（回基站后开始清洗）。 */
-  async _washMop() {
+  /** 基站动作：vacuum.send_command（集成侧走 stationAction type=1/2/4）。
+   * 机器人不在基站时设备会自行处理（回基站后执行）。 */
+  async _stationAction(command, label) {
     if (!this._hass || this._cleaning || this._stopping) return;
-    this._setCommandStatus("正在发送清洗拖布命令…");
+    this._setCommandStatus(`正在发送${label}命令…`);
     try {
       await this._hass.callService("vacuum", "send_command", {
         entity_id: this._config.vacuum_entity,
-        command: "wash_mop",
+        command,
       });
-      this._setCommandStatus("已发送清洗拖布命令", false, true);
+      this._setCommandStatus(`已发送${label}命令`, false, true);
     } catch (error) {
       const message = error?.message || String(error);
       this._setCommandStatus(`命令发送失败：${message}`, true);
@@ -1996,11 +2008,11 @@ class T90ModernMapCard extends HTMLElement {
     if (dockBtn) {
       dockBtn.disabled = inactiveStates.includes(state);
     }
-    // 清洗拖布：清扫中/暂停/返回中不可发（机器人须先回到基站）
-    const washBtn = this.shadowRoot.querySelector(".wash-mop");
-    if (washBtn) {
-      washBtn.disabled = ["cleaning", "paused", "returning", "unavailable", "unknown"].includes(state);
-    }
+    // 基站动作（集尘/烘干/清洗拖布）：清扫中/暂停/返回中不可发（须先回基站）
+    const stationDisabled = ["cleaning", "paused", "returning", "unavailable", "unknown"].includes(state);
+    this.shadowRoot.querySelectorAll(".station-tool").forEach((btn) => {
+      btn.disabled = stationDisabled;
+    });
     if (this._pauseButton) {
       // 乐观锁定且状态尚未确认为清扫/暂停时，暂停/结束暂不可按：
       // 机器人还没真正开始，此时下发暂停会失败

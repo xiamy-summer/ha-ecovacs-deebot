@@ -121,6 +121,21 @@
       },
       "station_action_wash_mop": {
         "name": "Wash mop"
+      },
+      "reset_lifespan_dust_bucket": {
+        "name": "Reset dust bucket lifespan"
+      },
+      "reset_lifespan_dust_container_filter": {
+        "name": "Reset dust container filter lifespan"
+      },
+      "reset_lifespan_heavy_duty_cleaning_solution": {
+        "name": "Reset heavy-duty cleaning solution lifespan"
+      },
+      "reset_lifespan_mop_washing_tray": {
+        "name": "Reset mop washing tray lifespan"
+      },
+      "reset_lifespan_strainer": {
+        "name": "Reset strainer lifespan"
       }
     },
     "event": {
@@ -154,6 +169,9 @@
       },
       "water_amount": {
         "name": "Water flow level"
+      },
+      "mop_auto_wash_frequency": {
+        "name": "Mop auto-wash frequency"
       }
     },
     "select": {
@@ -299,6 +317,24 @@
       },
       "total_stats_time_mower": {
         "name": "Total mowing duration"
+      },
+      "lifespan_dust_bucket": {
+        "name": "Dust bucket lifespan"
+      },
+      "lifespan_dust_container_filter": {
+        "name": "Dust container filter lifespan"
+      },
+      "lifespan_heavy_duty_cleaning_solution": {
+        "name": "Heavy-duty cleaning solution lifespan"
+      },
+      "lifespan_mop_washing_tray": {
+        "name": "Mop washing tray lifespan"
+      },
+      "lifespan_strainer": {
+        "name": "Strainer lifespan"
+      },
+      "last_clean": {
+        "name": "Last clean"
       }
     },
     "switch": {
@@ -334,6 +370,15 @@
       },
       "true_detect": {
         "name": "True detect"
+      },
+      "sweep_mode": {
+        "name": "Mop only"
+      },
+      "voice_assistant": {
+        "name": "Voice assistant"
+      },
+      "auto_ota": {
+        "name": "Auto update"
       }
     },
     "vacuum": {

@@ -8,6 +8,7 @@ from deebot_client.capabilities import CapabilityNumber, CapabilitySet
 from deebot_client.device import Device
 from deebot_client.events import CleanCountEvent, CutDirectionEvent, VolumeEvent
 from deebot_client.events.base import Event
+from deebot_client.events.mop_auto_wash_frequency import MopAutoWashFrequencyEvent
 from deebot_client.events.water_info import WaterCustomAmountEvent
 
 from homeassistant.components.number import (
@@ -73,6 +74,17 @@ ENTITY_DESCRIPTIONS: tuple[EcovacsNumberEntityDescription, ...] = (
         entity_category=EntityCategory.CONFIG,
         native_min_value=1,
         native_max_value=4,
+        native_step=1.0,
+        mode=NumberMode.BOX,
+    ),
+    EcovacsNumberEntityDescription[MopAutoWashFrequencyEvent](
+        # App「洗拖布频率」：getWashInfo/setWashInfo 的 interval，
+        # jkzzec 能力声明为 0-60（0 = 关闭自动回洗）
+        capability_fn=lambda caps: caps.settings.mop_auto_wash_frequency,
+        value_fn=lambda e: e.value,
+        key="mop_auto_wash_frequency",
+        translation_key="mop_auto_wash_frequency",
+        entity_category=EntityCategory.CONFIG,
         native_step=1.0,
         mode=NumberMode.BOX,
     ),

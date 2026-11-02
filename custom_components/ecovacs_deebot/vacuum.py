@@ -82,6 +82,13 @@ _EFFICIENCY_TO_SWEEP_MODE = {
 
 ATTR_ERROR = "error"
 
+# 卡片/服务基站动作 → StationAction（type：1=集尘 2=烘干 3=洗基站 4=清洗拖布）
+_STATION_ACTIONS = {
+    "empty_dustbin": StationAction.EMPTY_DUSTBIN,
+    "dry_mop": StationAction.DRY_MOP,
+    "wash_mop": StationAction.WASH_MOP,
+}
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -316,12 +323,11 @@ class EcovacsVacuum(
                 translation_key="vacuum_send_command_params_dict",
             )
 
-        if command == "wash_mop":
-            # 清洗拖布（基站动作）：stationAction {"act":1,"type":4}。
-            # jkzzec 设备能力（hardware/jkzzec.py）已声明 WASH_MOP，
-            # 同时会生成 station_action_wash_mop 按钮实体，两条通道等价。
+        if (station_action_type := _STATION_ACTIONS.get(command)) is not None:
+            # 基站动作：stationAction {"act":1,"type":N}。
+            # 与 button.py 生成的 station_action_* 按钮实体等价，卡片直接走这条。
             await self._device.execute_command(
-                station_action.StationAction(StationAction.WASH_MOP)
+                station_action.StationAction(station_action_type)
             )
             return
 

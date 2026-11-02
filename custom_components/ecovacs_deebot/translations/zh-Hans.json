@@ -121,6 +121,21 @@
       },
       "station_action_wash_mop": {
         "name": "清洗拖布"
+      },
+      "reset_lifespan_dust_bucket": {
+        "name": "重置尘盒寿命"
+      },
+      "reset_lifespan_dust_container_filter": {
+        "name": "重置尘盒滤网寿命"
+      },
+      "reset_lifespan_heavy_duty_cleaning_solution": {
+        "name": "重置强力清洁液寿命"
+      },
+      "reset_lifespan_mop_washing_tray": {
+        "name": "重置洗拖布托盘寿命"
+      },
+      "reset_lifespan_strainer": {
+        "name": "重置滤网寿命"
       }
     },
     "event": {
@@ -154,6 +169,9 @@
       },
       "water_amount": {
         "name": "出水量等级"
+      },
+      "mop_auto_wash_frequency": {
+        "name": "洗拖布频率"
       }
     },
     "select": {
@@ -299,6 +317,24 @@
       },
       "total_stats_time_mower": {
         "name": "累计割草时长"
+      },
+      "lifespan_dust_bucket": {
+        "name": "尘盒寿命"
+      },
+      "lifespan_dust_container_filter": {
+        "name": "尘盒滤网寿命"
+      },
+      "lifespan_heavy_duty_cleaning_solution": {
+        "name": "强力清洁液寿命"
+      },
+      "lifespan_mop_washing_tray": {
+        "name": "洗拖布托盘寿命"
+      },
+      "lifespan_strainer": {
+        "name": "滤网寿命"
+      },
+      "last_clean": {
+        "name": "清洁记录"
       }
     },
     "switch": {
@@ -334,6 +370,15 @@
       },
       "true_detect": {
         "name": "智能探测"
+      },
+      "sweep_mode": {
+        "name": "仅拖地"
+      },
+      "voice_assistant": {
+        "name": "语音助手"
+      },
+      "auto_ota": {
+        "name": "自动升级"
       }
     },
     "vacuum": {

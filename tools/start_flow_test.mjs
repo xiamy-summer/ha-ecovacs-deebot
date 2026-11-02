@@ -54,7 +54,7 @@ function extractMethod(name) {
   throw new Error(`方法 ${name} 花括号不配对`);
 }
 
-const methodNames = ["_cleanSelectedRooms", "_askConfirm", "_resolveConfirm", "_setPendingClean", "_setAgentMode"];
+const methodNames = ["_cleanSelectedRooms", "_askConfirm", "_resolveConfirm", "_setPendingClean", "_setAgentMode", "_stationAction"];
 const methods = Object.fromEntries(
   methodNames.map((name) => [name, extractMethod(name)]),
 );
@@ -305,6 +305,37 @@ const check = (label, cond, extra = "") => {
   const { ctx: ctx2, calls: calls2 } = makeContext();
   await ctx2._setAgentMode(false);
   check("关闭开关：enable:false", calls2[0]?.data.params.enable === false);
+}
+
+// 14) 基站动作（集尘/烘干/清洗拖布）：各走一条 send_command
+for (const [command, label] of [
+  ["empty_dustbin", "集尘"],
+  ["dry_mop", "烘干拖布"],
+  ["wash_mop", "清洗拖布"],
+]) {
+  const { ctx, calls, toasts } = makeContext();
+  await ctx._stationAction(command, label);
+  const sent = calls[0];
+  check(`基站动作 ${label}：下发 ${command}`,
+    sent?.domain === "vacuum" && sent?.service === "send_command" && sent?.data.command === command);
+  check(`基站动作 ${label}：附带 vacuum 实体`, sent?.data.entity_id === "vacuum.t90");
+  check(`基站动作 ${label}：成功提示`, toasts.at(-1)?.isSuccess === true);
+}
+
+// 15) 基站动作失败：错误提示且不静默
+{
+  const { ctx, toasts, calls } = makeContext({ fail: true });
+  await ctx._stationAction("wash_mop", "清洗拖布");
+  check("基站动作失败：下发一次", calls.length === 1);
+  check("基站动作失败：错误提示", toasts.at(-1)?.isError === true);
+}
+
+// 16) 命令发送中再次点击：不发第二条
+{
+  const { ctx, calls } = makeContext();
+  ctx._cleaning = true;
+  await ctx._stationAction("dry_mop", "烘干拖布");
+  check("基站动作发送中：不重复下发", calls.length === 0);
 }
 
 console.log(failed === 0 ? "\n全部用例通过" : `\n${failed} 个用例失败`);

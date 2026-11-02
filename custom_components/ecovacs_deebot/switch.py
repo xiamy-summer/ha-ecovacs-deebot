@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, override
 
 from deebot_client.capabilities import CapabilitySetEnable
-from deebot_client.events import EnableEvent
+from deebot_client.events import EnableEvent, OtaEvent
 
 from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
 from homeassistant.const import EntityCategory
@@ -106,6 +106,20 @@ ENTITY_DESCRIPTIONS: tuple[EcovacsSwitchEntityDescription, ...] = (
         entity_registry_enabled_default=False,
         entity_category=EntityCategory.CONFIG,
     ),
+    # App「仅拖地」：getSweepMode/setSweepMode（Mop-Only option）
+    EcovacsSwitchEntityDescription(
+        capability_fn=lambda c: c.settings.sweep_mode,
+        key="sweep_mode",
+        translation_key="sweep_mode",
+        entity_category=EntityCategory.CONFIG,
+    ),
+    # App「语音助手」开关
+    EcovacsSwitchEntityDescription(
+        capability_fn=lambda c: c.settings.voice_assistant,
+        key="voice_assistant",
+        translation_key="voice_assistant",
+        entity_category=EntityCategory.CONFIG,
+    ),
 )
 
 
@@ -118,6 +132,13 @@ async def async_setup_entry(
     controller = config_entry.runtime_data
     entities: list[EcovacsEntity] = get_supported_entities(
         controller, EcovacsSwitchEntity, ENTITY_DESCRIPTIONS
+    )
+    # OTA 自动升级：OtaEvent 的字段是 auto_enabled（不是 EnableEvent.enabled），
+    # 不能复用上面的通用 switch 实体，单独实现
+    entities.extend(
+        EcovacsOtaSwitch(device, device.capabilities.settings.ota)
+        for device in controller.devices
+        if isinstance(device.capabilities.settings.ota, CapabilitySetEnable)
     )
     if entities:
         async_add_entities(entities)
@@ -152,4 +173,43 @@ class EcovacsSwitchEntity(
     @override
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the entity off."""
+        await self._device.execute_command(self._capability.set(False))
+
+
+class EcovacsOtaSwitch(EcovacsEntity[CapabilitySetEnable], SwitchEntity):
+    """自动升级开关（OtaEvent.auto_enabled）。"""
+
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_is_on = False
+
+    entity_description = SwitchEntityDescription(
+        key="auto_ota",
+        translation_key="auto_ota",
+    )
+
+    @override
+    async def async_added_to_hass(self) -> None:
+        """Set up the event listeners now that hass is ready."""
+        await super().async_added_to_hass()
+
+        async def on_event(event: OtaEvent) -> None:
+            self._attr_available = event.support_auto
+            self._attr_is_on = bool(event.auto_enabled)
+            self._attr_extra_state_attributes = {
+                "version": event.version,
+                "status": event.status,
+                "progress": event.progress,
+            }
+            self.async_write_ha_state()
+
+        self._subscribe(OtaEvent, on_event)
+
+    @override
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Enable automatic firmware updates."""
+        await self._device.execute_command(self._capability.set(True))
+
+    @override
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Disable automatic firmware updates."""
         await self._device.execute_command(self._capability.set(False))

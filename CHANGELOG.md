@@ -6,7 +6,15 @@
 
 - **清洗拖布（基站动作）**：
   - 集成侧：`SUPPORTED_STATION_ACTIONS` 白名单补上 `StationAction.WASH_MOP`（库枚举与 `jkzzec` 设备能力早已声明，白名单遗漏导致按钮实体从不创建），自动生成 `button.xxx_station_action_wash_mop` 按钮实体（清洗拖布）
-  - 卡片：地图下方工具区新增「清洗拖布」按钮（水滴图标），走 `vacuum.send_command` → `stationAction {"act":1,"type":4}`；清扫中/暂停/返回中自动置灰；编辑器支持显隐开关（`show_wash_mop`，默认显示）
+  - 卡片：地图下方工具区新增「清洗拖布」按钮（水滴图标），走 `vacuum.send_command` → `stationAction {"act":1,"type":4}`；清扫中/暂停/返回中自动置灰
+- **基站动作卡片化**：工具区新增「集尘」「烘干拖布」按钮，`vacuum.send_command` 支持 `empty_dustbin`/`dry_mop`/`wash_mop` 三个通道；三个按钮由 `show_station_actions` 统一控制显隐
+- **补齐 jkzzec 已声明但缺失的实体**：
+  - `number.洗拖布频率`（`getWashInfo/setWashInfo`，0–60）
+  - `switch.仅拖地`（`getSweepMode/setSweepMode`，Mop-Only）
+  - `switch.语音助手`
+  - `switch.自动升级`（独立实体：`OtaEvent.auto_enabled` 与 `EnableEvent.enabled` 字段不同，附版本/状态/进度属性）
+  - `sensor.清洁记录`（最近一次任务的结束时间，附面积/时长/结束原因/截图）
+- **补齐 5 项耗材**：尘盒、尘盒滤网、强力清洁液、洗拖布托盘、滤网 —— 寿命传感器 + 重置按钮（`SUPPORTED_LIFESPANS` 白名单遗漏）
 
 ## v0.3.0 — AI 智能托管 + 全新现代化地图卡片
 

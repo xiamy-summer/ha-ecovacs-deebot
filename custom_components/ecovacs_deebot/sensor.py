@@ -2,12 +2,15 @@
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, fields, replace
+from datetime import UTC, datetime
 from typing import Any, Self, override
 
 from deebot_client.capabilities import CapabilityEvent, CapabilityLifeSpan, DeviceType
 from deebot_client.device import Device
 from deebot_client.events import (
     BatteryEvent,
+    CleanJobStatus,
+    CleanLogEvent,
     ErrorEvent,
     Event,
     LifeSpan,
@@ -242,6 +245,12 @@ async def async_setup_entry(
         for device in controller.devices
         if (capability := device.capabilities.error)
     )
+    # 清洁记录：jkzzec 声明了 clean.log（getCleanLogs），此前没有实体
+    entities.extend(
+        EcovacsCleanLogSensor(device, log_capability)
+        for device in controller.devices
+        if (log_capability := device.capabilities.clean.log) is not None
+    )
 
     async_add_entities(entities)
 
@@ -334,3 +343,47 @@ class EcovacsErrorSensor(
             self.async_write_ha_state()
 
         self._subscribe(self._capability.event, on_event)
+
+
+_CLEAN_STOP_REASONS = {
+    CleanJobStatus.FINISHED: "已完成",
+    CleanJobStatus.MANUALLY_STOPPED: "手动停止",
+    CleanJobStatus.FINISHED_WITH_WARNINGS: "完成但有警告",
+}
+
+
+class EcovacsCleanLogSensor(
+    EcovacsEntity[CapabilityEvent[CleanLogEvent]],
+    SensorEntity,
+):
+    """清洁记录传感器：最近一次任务的结束时间，附带面积/时长/结束原因。"""
+
+    _always_available = True
+    entity_description = SensorEntityDescription(
+        key="last_clean",
+        translation_key="last_clean",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        icon="mdi:history",
+    )
+
+    @override
+    async def async_added_to_hass(self) -> None:
+        """Set up the event listeners now that hass is ready."""
+        await super().async_added_to_hass()
+
+        async def on_event(event: CleanLogEvent) -> None:
+            if not event.logs:
+                return
+            latest = max(event.logs, key=lambda entry: entry.timestamp)
+            self._attr_native_value = datetime.fromtimestamp(latest.timestamp, tz=UTC)
+            self._attr_extra_state_attributes = {
+                "area": latest.area,
+                "duration": latest.duration,
+                "stop_reason": _CLEAN_STOP_REASONS.get(
+                    latest.stop_reason, str(latest.stop_reason)
+                ),
+                "image_url": latest.image_url,
+            }
+            self.async_write_ha_state()
+
+        self._subscribe(CleanLogEvent, on_event)
