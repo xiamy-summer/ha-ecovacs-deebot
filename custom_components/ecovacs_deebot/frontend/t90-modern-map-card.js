@@ -682,6 +682,17 @@ class T90ModernMapCard extends HTMLElement {
         .map-tool:hover:not(:disabled) { color: var(--primary-color); background: color-mix(in srgb, var(--primary-color) 10%, transparent); }
         .map-tool:active:not(:disabled) { transform: scale(.92); }
         .map-tool:disabled { opacity: .35; cursor: default; }
+        /* 基站动作执行中：高亮描边，点击=取消 */
+        .map-tool.station-busy {
+          color: var(--primary-color);
+          background: color-mix(in srgb, var(--primary-color) 14%, transparent);
+          box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--primary-color) 45%, transparent);
+          animation: station-pulse 1.6s ease-in-out infinite;
+        }
+        @keyframes station-pulse {
+          0%, 100% { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--primary-color) 45%, transparent); }
+          50% { box-shadow: inset 0 0 0 2.5px color-mix(in srgb, var(--primary-color) 70%, transparent); }
+        }
 
         /* ---------- 命令提示 toast（地图顶部居中悬浮） ---------- */
         .toast {
@@ -1788,17 +1799,42 @@ class T90ModernMapCard extends HTMLElement {
     }
   }
 
+  /** 基站当前执行的动作（empty_dustbin/dry_mop/wash_mop/null）。
+   * 来源：vacuum 实体 station_state 属性（StationEvent 回推）；
+   * 本地点击后的 8 秒内用乐观覆盖，避免设备回推延迟造成按钮状态闪烁。 */
+  _stationBusyAction() {
+    if (this._stationOverride && Date.now() < this._stationOverride.until) {
+      return this._stationOverride.state;
+    }
+    const attr = this._hass?.states?.[this._config.vacuum_entity]?.attributes?.station_state;
+    return ["empty_dustbin", "dry_mop", "wash_mop"].includes(attr) ? attr : null;
+  }
+
   /** 基站动作：vacuum.send_command（集成侧走 stationAction type=1/2/4）。
+   * 正在执行同一动作时再次点击 = 取消（station_action_stop，act=2 待抓包验证）。
    * 机器人不在基站时设备会自行处理（回基站后执行）。 */
   async _stationAction(command, label) {
     if (!this._hass || this._cleaning || this._stopping) return;
-    this._setCommandStatus(`正在发送${label}命令…`);
+    const busy = this._stationBusyAction() === command;
+    const verb = busy ? "取消" : "";
+    this._setCommandStatus(`正在发送${verb}${label}命令…`);
     try {
-      await this._hass.callService("vacuum", "send_command", {
-        entity_id: this._config.vacuum_entity,
-        command,
-      });
-      this._setCommandStatus(`已发送${label}命令`, false, true);
+      if (busy) {
+        await this._hass.callService("vacuum", "send_command", {
+          entity_id: this._config.vacuum_entity,
+          command: "station_action_stop",
+          params: { type: command },
+        });
+        this._stationOverride = { state: null, until: Date.now() + 8000 };
+      } else {
+        await this._hass.callService("vacuum", "send_command", {
+          entity_id: this._config.vacuum_entity,
+          command,
+        });
+        this._stationOverride = { state: command, until: Date.now() + 8000 };
+      }
+      this._setCommandStatus(`已发送${verb}${label}命令`, false, true);
+      this._syncButtons?.();
     } catch (error) {
       const message = error?.message || String(error);
       this._setCommandStatus(`命令发送失败：${message}`, true);
@@ -2008,10 +2044,19 @@ class T90ModernMapCard extends HTMLElement {
     if (dockBtn) {
       dockBtn.disabled = inactiveStates.includes(state);
     }
-    // 基站动作（集尘/烘干/清洗拖布）：清扫中/暂停/返回中不可发（须先回基站）
+    // 基站动作（集尘/烘干/清洗拖布）：清扫中/暂停/返回中不可发（须先回基站）；
+    // 正在执行的动作高亮显示，此时按钮=取消（不受置灰限制）
     const stationDisabled = ["cleaning", "paused", "returning", "unavailable", "unknown"].includes(state);
+    const stationLabels = { empty_dustbin: "集尘", dry_mop: "烘干拖布", wash_mop: "清洗拖布" };
+    const busyAction = this._stationBusyAction();
     this.shadowRoot.querySelectorAll(".station-tool").forEach((btn) => {
-      btn.disabled = stationDisabled;
+      const cmd = ["empty-dustbin", "dry-mop", "wash-mop"]
+        .find((c) => btn.classList.contains(c))
+        ?.replace(/-/g, "_");
+      const isBusy = cmd != null && busyAction === cmd;
+      btn.classList.toggle("station-busy", isBusy);
+      btn.title = isBusy ? `点击取消${stationLabels[cmd]}` : stationLabels[cmd];
+      btn.disabled = stationDisabled && !isBusy;
     });
     if (this._pauseButton) {
       // 乐观锁定且状态尚未确认为清扫/暂停时，暂停/结束暂不可按：

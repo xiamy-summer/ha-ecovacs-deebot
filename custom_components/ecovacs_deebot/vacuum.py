@@ -15,6 +15,7 @@ from deebot_client.events import (
     StateEvent,
 )
 from deebot_client.events.map import Map
+from deebot_client.events import station as station_events
 from deebot_client.commands.json.clean_count import SetCleanCount
 from deebot_client.commands.json.custom import CustomCommand
 from deebot_client.commands.json.fan_speed import SetFanSpeed
@@ -89,6 +90,21 @@ _STATION_ACTIONS = {
     "wash_mop": StationAction.WASH_MOP,
 }
 
+# StationEvent.State → 卡片/属性用的字符串（与 _STATION_ACTIONS 的 key 对应）
+_STATION_STATE_NAMES = {
+    station_events.State.IDLE: None,
+    station_events.State.EMPTYING_DUSTBIN: "empty_dustbin",
+    station_events.State.DRYING_MOP: "dry_mop",
+    station_events.State.WASHING_MOP: "wash_mop",
+}
+
+# 启动某动作后预期的基站状态（乐观更新，设备 StationEvent 回推后覆盖）
+_STATION_EXPECTED_STATE = {
+    "empty_dustbin": station_events.State.EMPTYING_DUSTBIN,
+    "dry_mop": station_events.State.DRYING_MOP,
+    "wash_mop": station_events.State.WASHING_MOP,
+}
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -148,6 +164,8 @@ class EcovacsVacuum(
         self._room_event: RoomsEvent | None = None
         self._maps: dict[str, Map] = {}
         self._agent_enabled: bool | None = None
+        # 基站当前动作（StationEvent 回推；None=未知/空闲）
+        self._station_state: station_events.State | None = None
 
         if fan_speed := self._capability.fan_speed:
             self._attr_supported_features |= VacuumEntityFeature.FAN_SPEED
@@ -168,6 +186,12 @@ class EcovacsVacuum(
             self.async_write_ha_state()
 
         self._subscribe(self._capability.state.event, on_status)
+
+        async def on_station_state(event: station_events.StationEvent) -> None:
+            self._station_state = event.state
+            self.async_write_ha_state()
+
+        self._subscribe(station_events.StationEvent, on_station_state)
 
         if self._capability.fan_speed:
 
@@ -206,6 +230,10 @@ class EcovacsVacuum(
         attributes["agent_clean"] = (
             None if self._agent_enabled is None
             else "on" if self._agent_enabled else "off"
+        )
+        # 基站当前动作（null=空闲/未知；empty_dustbin/dry_mop/wash_mop）
+        attributes["station_state"] = _STATION_STATE_NAMES.get(
+            self._station_state
         )
         if self._room_event is None:
             return attributes
@@ -329,6 +357,27 @@ class EcovacsVacuum(
             await self._device.execute_command(
                 station_action.StationAction(station_action_type)
             )
+            # 乐观同步（设备 StationEvent 回推后覆盖）
+            self._station_state = _STATION_EXPECTED_STATE[command]
+            self.async_write_ha_state()
+            return
+
+        if command == "station_action_stop":
+            # 取消正在执行的基站动作：stationAction {"act":2,"type":N}。
+            # 库内只有 act=1（启动），act=2=取消为社区惯例推断（clean_V2 用
+            # act: start/pause/stop，数字型命令 act 通常 1=启动 2=停止），
+            # **待抓包实测**；若设备不识别会回错误码，不影响其他功能。
+            # params 可带 {"type": "wash_mop"} 指定动作，缺省则不带 type。
+            stop_params: dict[str, Any] = {"act": 2}
+            if isinstance(params, dict) and (t := params.get("type")):
+                if (action_type := _STATION_ACTIONS.get(str(t))) is not None:
+                    stop_params["type"] = action_type.value
+            await self._device.execute_command(
+                CustomCommand("stationAction", stop_params)
+            )
+            # 乐观同步（设备 StationEvent 回推后覆盖）
+            self._station_state = station_events.State.IDLE
+            self.async_write_ha_state()
             return
 
         if command == "agent_clean":

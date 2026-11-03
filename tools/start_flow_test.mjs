@@ -54,7 +54,7 @@ function extractMethod(name) {
   throw new Error(`方法 ${name} 花括号不配对`);
 }
 
-const methodNames = ["_cleanSelectedRooms", "_askConfirm", "_resolveConfirm", "_setPendingClean", "_setAgentMode", "_stationAction"];
+const methodNames = ["_cleanSelectedRooms", "_askConfirm", "_resolveConfirm", "_setPendingClean", "_setAgentMode", "_stationAction", "_stationBusyAction"];
 const methods = Object.fromEntries(
   methodNames.map((name) => [name, extractMethod(name)]),
 );
@@ -77,6 +77,7 @@ function makeContext({
   fail = false,
   hang = false,
   agent = false,
+  stationState = null,
 } = {}) {
   const toasts = [];
   const calls = [];
@@ -86,7 +87,7 @@ function makeContext({
     _hass: {
       states: {
         get "vacuum.t90"() {
-          return { state: currentState };
+          return { state: currentState, attributes: { station_state: stationState } };
         },
         "image.t90_map": { attributes: { rooms } },
       },
@@ -336,6 +337,26 @@ for (const [command, label] of [
   ctx._cleaning = true;
   await ctx._stationAction("dry_mop", "烘干拖布");
   check("基站动作发送中：不重复下发", calls.length === 0);
+}
+
+// 17) 基站动作取消：执行中点击 = station_action_stop
+{
+  const { ctx, calls, toasts } = makeContext({ stationState: "wash_mop" });
+  check("实体属性 busy：_stationBusyAction 读取正确", ctx._stationBusyAction() === "wash_mop");
+  await ctx._stationAction("wash_mop", "清洗拖布");
+  const sent = calls[0];
+  check("取消：下发 station_action_stop", sent?.data.command === "station_action_stop");
+  check("取消：params.type 指向动作", sent?.data.params?.type === "wash_mop");
+  check("取消：提示含「取消」", toasts.at(-1)?.msg.includes("取消") === true);
+  check("取消：乐观覆盖为空闲", ctx._stationOverride?.state === null);
+  check("取消后：_stationBusyAction 变空闲", ctx._stationBusyAction() === null);
+}
+{
+  // 非同一动作 busy：点击其他按钮仍是启动
+  const { ctx, calls } = makeContext({ stationState: "wash_mop" });
+  await ctx._stationAction("dry_mop", "烘干拖布");
+  check("其他动作 busy：点击仍走启动", calls[0]?.data.command === "dry_mop");
+  check("其他动作 busy：不带 params", calls[0]?.data.params === undefined);
 }
 
 console.log(failed === 0 ? "\n全部用例通过" : `\n${failed} 个用例失败`);
