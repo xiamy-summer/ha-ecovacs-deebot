@@ -122,6 +122,18 @@
       "station_action_wash_mop": {
         "name": "清洗拖布"
       },
+      "station_action_stop_clean_base": {
+        "name": "取消清洗基站"
+      },
+      "station_action_stop_dry_mop": {
+        "name": "取消烘干拖布"
+      },
+      "station_action_stop_empty_dustbin": {
+        "name": "取消集尘"
+      },
+      "station_action_stop_wash_mop": {
+        "name": "取消清洗拖布"
+      },
       "reset_lifespan_dust_bucket": {
         "name": "重置尘盒寿命"
       },

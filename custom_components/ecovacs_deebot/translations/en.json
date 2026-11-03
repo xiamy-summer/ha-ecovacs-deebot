@@ -122,6 +122,18 @@
       "station_action_wash_mop": {
         "name": "Wash mop"
       },
+      "station_action_stop_clean_base": {
+        "name": "Cancel clean base"
+      },
+      "station_action_stop_dry_mop": {
+        "name": "Cancel dry mop"
+      },
+      "station_action_stop_empty_dustbin": {
+        "name": "Cancel empty dustbin"
+      },
+      "station_action_stop_wash_mop": {
+        "name": "Cancel wash mop"
+      },
       "reset_lifespan_dust_bucket": {
         "name": "Reset dust bucket lifespan"
       },

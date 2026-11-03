@@ -9,6 +9,7 @@ from deebot_client.capabilities import (
     CapabilityLifeSpan,
 )
 from deebot_client.commands import StationAction
+from deebot_client.commands.json.custom import CustomCommand
 from deebot_client.events import LifeSpan
 
 from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
@@ -48,6 +49,13 @@ class EcovacsStationActionButtonEntityDescription(ButtonEntityDescription):
     action: StationAction
 
 
+@dataclass(kw_only=True, frozen=True)
+class EcovacsStationActionStopButtonEntityDescription(ButtonEntityDescription):
+    """Ecovacs station action cancel button entity description."""
+
+    action: StationAction
+
+
 ENTITY_DESCRIPTIONS: tuple[EcovacsButtonEntityDescription, ...] = (
     EcovacsButtonEntityDescription(
         capability_fn=lambda caps: caps.map.relocation if caps.map else None,
@@ -62,6 +70,17 @@ STATION_ENTITY_DESCRIPTIONS = tuple(
         action=action,
         key=f"station_action_{action.name.lower()}",
         translation_key=f"station_action_{action.name.lower()}",
+    )
+    for action in SUPPORTED_STATION_ACTIONS
+)
+
+STATION_STOP_ENTITY_DESCRIPTIONS = tuple(
+    EcovacsStationActionStopButtonEntityDescription(
+        action=action,
+        key=f"station_action_stop_{action.name.lower()}",
+        translation_key=f"station_action_stop_{action.name.lower()}",
+        entity_category=EntityCategory.CONFIG,
+        entity_registry_enabled_default=False,
     )
     for action in SUPPORTED_STATION_ACTIONS
 )
@@ -104,6 +123,15 @@ async def async_setup_entry(
         for device in controller.devices
         if device.capabilities.station
         for description in STATION_ENTITY_DESCRIPTIONS
+        if description.action in device.capabilities.station.action.types
+    )
+    entities.extend(
+        EcovacsStationActionStopButtonEntity(
+            device, device.capabilities.station.action, description
+        )
+        for device in controller.devices
+        if device.capabilities.station
+        for description in STATION_STOP_ENTITY_DESCRIPTIONS
         if description.action in device.capabilities.station.action.types
     )
     async_add_entities(entities)
@@ -152,4 +180,27 @@ class EcovacsStationActionButtonEntity(
         """Press the button."""
         await self._device.execute_command(
             self._capability.execute(self.entity_description.action)
+        )
+
+
+class EcovacsStationActionStopButtonEntity(
+    EcovacsDescriptionEntity[CapabilityExecuteTypes[StationAction]],
+    ButtonEntity,
+):
+    """取消正在执行的基站动作（stationAction act=2）。
+
+    库内只实现了 act=1（启动），act=2=取消为社区惯例推断，需真机实测。
+    实体默认禁用（配置类），需要时在实体注册表里启用。
+    """
+
+    entity_description: EcovacsStationActionStopButtonEntityDescription
+
+    @override
+    async def async_press(self) -> None:
+        """Cancel the running station action."""
+        await self._device.execute_command(
+            CustomCommand(
+                "stationAction",
+                {"act": 2, "type": self.entity_description.action.value},
+            )
         )
